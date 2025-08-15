@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://cdn.jsdelivr.net/npm/remixicon@4.5.0/fonts/remixicon.css" rel="stylesheet" />
+    <link rel="stylesheet" href="photography.css" />
+    <title>Admin Panel - Photography Portfolio</title>
+    <style>
+        .admin-container {
+            max-width: 800px;
+            margin: 120px auto;
+            padding: 2rem;
+        }
+        .login-form, .upload-form {
+            background: white;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            margin-bottom: 2rem;
+        }
+        .form-group {
+            margin-bottom: 1rem;
+        }
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+        }
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 0.5rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-bottom: 1rem;
+        }
+        .photo-preview {
+            margin: 1rem 0;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 1rem;
+        }
+        .photo-preview img {
+            width: 100%;
+            height: 150px;
+            object-fit: cover;
+            border-radius: 4px;
+        }
+        .hidden {
+            display: none;
+        }
+
+        /* Mobile Responsiveness */
+        @media (max-width: 768px) {
+            .admin-container {
+                margin: 80px auto;
+                padding: 1rem;
+            }
+            
+            .login-form, .upload-form {
+                padding: 1.5rem;
+            }
+            
+            .photo-preview {
+                grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+                gap: 0.8rem;
+            }
+            
+            .photo-preview img {
+                height: 120px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .admin-container {
+                margin: 60px auto;
+                padding: 0.8rem;
+            }
+            
+            .login-form, .upload-form {
+                padding: 1rem;
+            }
+            
+            .photo-preview {
+                grid-template-columns: 1fr;
+                gap: 0.6rem;
+            }
+            
+            .photo-preview img {
+                height: 100px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <nav>
+        <div class="nav__header">
+            <div class="nav__logo">
+                <a href="#">
+                    <img src="assets/logo.png" alt="logo" />
+                </a>
+            </div>
+        </div>
+        <ul class="nav__links">
+            <li><a href="home.html">Back to Site</a></li>
+        </ul>
+    </nav>
+
+    <div class="admin-container">
+        <!-- Login Form -->
+        <div id="loginForm" class="login-form">
+            <h2>Admin Login</h2>
+            <div class="form-group">
+                <label for="email">Email</label>
+                <input type="email" id="email" required>
+            </div>
+            <div class="form-group">
+                <label for="password">Password</label>
+                <input type="password" id="password" required>
+            </div>
+            <button onclick="login()" class="load-more-btn">Login</button>
+        </div>
+
+        <!-- Upload Form (hidden until logged in) -->
+        <div id="uploadForm" class="upload-form hidden">
+            <h2>Upload Photos</h2>
+            <div class="form-group">
+                <label for="photos">Select Photos</label>
+                <input type="file" id="photos" multiple accept="image/*" onchange="previewPhotos(event)">
+            </div>
+            <div class="form-group">
+                <label for="category">Category</label>
+                <select id="category">
+                    <option value="nature">Nature</option>
+                    <option value="portrait">Portrait</option>
+                    <option value="urban">Urban</option>
+                    <option value="travel">Travel</option>
+                    <option value="blackwhite">Black & White</option>
+                </select>
+            </div>
+            <div class="photo-preview" id="photoPreview"></div>
+            <button onclick="uploadPhotos()" class="load-more-btn">Upload Photos</button>
+        </div>
+    </div>
+
+    <script type="module">
+        // Import the functions you need from the SDKs you need
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.4.0/firebase-app.js";
+        import { getAuth, signInWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/10.4.0/firebase-auth.js";
+        import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.4.0/firebase-storage.js";
+        import { getFirestore, collection, addDoc } from "https://www.gstatic.com/firebasejs/10.4.0/firebase-firestore.js";
+
+        // Your web app's Firebase configuration
+        const firebaseConfig = {
+            // You'll need to add your Firebase config here
+        };
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth();
+        const storage = getStorage();
+        const db = getFirestore();
+
+        // Make functions globally available
+        window.login = async () => {
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+
+            try {
+                await signInWithEmailAndPassword(auth, email, password);
+                document.getElementById('loginForm').classList.add('hidden');
+                document.getElementById('uploadForm').classList.remove('hidden');
+            } catch (error) {
+                alert('Login failed: ' + error.message);
+            }
+        };
+
+        window.previewPhotos = (event) => {
+            const preview = document.getElementById('photoPreview');
+            preview.innerHTML = '';
+            const files = event.target.files;
+
+            for (const file of files) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const img = document.createElement('img');
+                    img.src = e.target.result;
+                    preview.appendChild(img);
+                };
+                reader.readAsDataURL(file);
+            }
+        };
+
+        window.uploadPhotos = async () => {
+            const files = document.getElementById('photos').files;
+            const category = document.getElementById('category').value;
+
+            for (const file of files) {
+                try {
+                    // Upload to Firebase Storage
+                    const storageRef = ref(storage, 'photos/' + Date.now() + '_' + file.name);
+                    await uploadBytes(storageRef, file);
+                    const url = await getDownloadURL(storageRef);
+
+                    // Add to Firestore
+                    await addDoc(collection(db, 'photos'), {
+                        url,
+                        category,
+                        timestamp: new Date(),
+                        description: file.name
+                    });
+                } catch (error) {
+                    console.error('Upload failed:', error);
+                    alert('Upload failed: ' + error.message);
+                }
+            }
+
+            alert('Upload complete!');
+            document.getElementById('photos').value = '';
+            document.getElementById('photoPreview').innerHTML = '';
+        };
+    </script>
+</body>
+</html>
