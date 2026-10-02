@@ -1035,7 +1035,8 @@ function serveStatic(req, res, url) {
 }
 
 async function requestHandler(req, res) {
-  const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+  const rawPath = req.headers["x-forwarded-uri"] || req.headers["x-matched-path"] || req.url;
+  const url = new URL(rawPath, `http://${req.headers.host || "localhost"}`);
   if (req.method === "GET" && url.pathname === "/api/public/site") {
     const sections = getSections().filter((section) => section.visible);
     const items = getPortfolioItems({ publicOnly: true });
