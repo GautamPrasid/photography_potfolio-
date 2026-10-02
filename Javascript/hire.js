@@ -44,6 +44,8 @@ function setupMobileMenu() {
             navLinks.classList.toggle('open');
             
             const isOpen = navLinks.classList.contains('open');
+            menuBtn.setAttribute('aria-expanded', String(isOpen));
+            menuBtn.setAttribute('aria-label', isOpen ? 'Close navigation' : 'Open navigation');
             menuBtnIcon.setAttribute(
                 'class',
                 isOpen ? 'ri-close-line' : 'ri-menu-3-line'
@@ -55,6 +57,8 @@ function setupMobileMenu() {
         links.forEach(link => {
             link.addEventListener('click', () => {
                 navLinks.classList.remove('open');
+                menuBtn.setAttribute('aria-expanded', 'false');
+                menuBtn.setAttribute('aria-label', 'Open navigation');
                 menuBtnIcon.setAttribute('class', 'ri-menu-3-line');
             });
         });
@@ -63,6 +67,8 @@ function setupMobileMenu() {
         document.addEventListener('click', (e) => {
             if (!menuBtn.contains(e.target) && !navLinks.contains(e.target)) {
                 navLinks.classList.remove('open');
+                menuBtn.setAttribute('aria-expanded', 'false');
+                menuBtn.setAttribute('aria-label', 'Open navigation');
                 menuBtnIcon.setAttribute('class', 'ri-menu-3-line');
             }
         });

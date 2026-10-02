@@ -6,6 +6,8 @@ menuBtn.addEventListener("click", (e) => {
   navLinks.classList.toggle("open");
 
   const isOpen = navLinks.classList.contains("open");
+  menuBtn.setAttribute("aria-expanded", String(isOpen));
+  menuBtn.setAttribute("aria-label", isOpen ? "Close navigation" : "Open navigation");
   menuBtnIcon.setAttribute(
     "class",
     isOpen ? "ri-close-line" : "ri-menu-3-line"
@@ -14,6 +16,8 @@ menuBtn.addEventListener("click", (e) => {
 
 navLinks.addEventListener("click", (e) => {
   navLinks.classList.remove("open");
+  menuBtn.setAttribute("aria-expanded", "false");
+  menuBtn.setAttribute("aria-label", "Open navigation");
   menuBtnIcon.setAttribute("class", "ri-menu-3-line");
 });
 
@@ -23,6 +27,7 @@ const scrollRevealOption = {
   duration: 1000,
 };
 
+if (window.ScrollReveal) {
 ScrollReveal().reveal(".header__image img", {
   ...scrollRevealOption,
   origin: "right",
@@ -57,3 +62,4 @@ ScrollReveal().reveal(".about__btn", {
   ...scrollRevealOption,
   delay: 2000,
 });
+}

@@ -1,6 +1,28 @@
 document.addEventListener('DOMContentLoaded', function() {
     // Header scroll effect
     const header = document.getElementById('mainHeader');
+
+    const menuBtn = document.getElementById('menu-btn');
+    const navLinks = document.getElementById('nav-links');
+    const menuBtnIcon = menuBtn?.querySelector('i');
+
+    if (menuBtn && navLinks && menuBtnIcon) {
+        menuBtn.addEventListener('click', function() {
+            const isOpen = navLinks.classList.toggle('open');
+            menuBtn.setAttribute('aria-expanded', String(isOpen));
+            menuBtn.setAttribute('aria-label', isOpen ? 'Close navigation' : 'Open navigation');
+            menuBtnIcon.className = isOpen ? 'ri-close-line' : 'ri-menu-3-line';
+        });
+
+        navLinks.querySelectorAll('a').forEach(function(link) {
+            link.addEventListener('click', function() {
+                navLinks.classList.remove('open');
+                menuBtn.setAttribute('aria-expanded', 'false');
+                menuBtn.setAttribute('aria-label', 'Open navigation');
+                menuBtnIcon.className = 'ri-menu-3-line';
+            });
+        });
+    }
     
     window.addEventListener('scroll', function() {
         if (window.scrollY > 50) {
