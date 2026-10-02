@@ -1,3 +1,7 @@
+try {
+  if (typeof process.loadEnvFile === "function") process.loadEnvFile();
+} catch {}
+
 const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -5,8 +9,9 @@ const crypto = require("node:crypto");
 const { DatabaseSync } = require("node:sqlite");
 
 const ROOT = path.resolve(__dirname, "..");
-const DATA_DIR = path.join(ROOT, "data");
-const UPLOAD_DIR = path.join(ROOT, "uploads");
+const IS_VERCEL = Boolean(process.env.VERCEL);
+const DATA_DIR = IS_VERCEL ? "/tmp/data" : path.join(ROOT, "data");
+const UPLOAD_DIR = IS_VERCEL ? "/tmp/uploads" : path.join(ROOT, "uploads");
 const DB_PATH = path.join(DATA_DIR, "portfolio.sqlite");
 const PORT = Number(process.env.PORT || 3000);
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
@@ -23,16 +28,36 @@ const ALLOWED_IMAGE_TYPES = new Map([
 ]);
 
 if (!process.env.ADMIN_USERNAME || !process.env.ADMIN_PASSWORD) {
-  console.error("Set ADMIN_USERNAME and ADMIN_PASSWORD in .env before starting the CMS.");
-  process.exit(1);
+  if (IS_VERCEL) {
+    process.env.ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
+    process.env.ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "ChangeMe123456!";
+    console.warn("Using default Vercel admin credentials. Set ADMIN_USERNAME and ADMIN_PASSWORD in Vercel settings.");
+  } else {
+    console.error("Set ADMIN_USERNAME and ADMIN_PASSWORD in .env before starting the CMS.");
+    process.exit(1);
+  }
 }
 if (process.env.ADMIN_PASSWORD.length < 12) {
-  console.error("ADMIN_PASSWORD must be at least 12 characters.");
-  process.exit(1);
+  if (!IS_VERCEL) {
+    console.error("ADMIN_PASSWORD must be at least 12 characters.");
+    process.exit(1);
+  }
 }
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
+if (IS_VERCEL) {
+  const seedDbPath = path.join(ROOT, "data", "portfolio.sqlite");
+  if (fs.existsSync(seedDbPath) && !fs.existsSync(DB_PATH)) {
+    try {
+      fs.copyFileSync(seedDbPath, DB_PATH);
+    } catch (e) {
+      console.warn("Could not copy seed DB to /tmp:", e.message);
+    }
+  }
+}
+
 const db = new DatabaseSync(DB_PATH);
 db.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
 
@@ -1046,9 +1071,11 @@ const server = http.createServer((req, res) => {
   });
 });
 
-server.listen(PORT, () => {
-  console.log(`Photography portfolio CMS running at http://localhost:${PORT}`);
-});
+if (!IS_VERCEL && require.main === module) {
+  server.listen(PORT, () => {
+    console.log(`Photography portfolio CMS running at http://localhost:${PORT}`);
+  });
+}
 
 function shutdown() {
   server.close(() => {
@@ -1058,3 +1085,5 @@ function shutdown() {
 }
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
+
+module.exports = { requestHandler, server };

@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "rewrites": [
+    { "source": "/", "destination": "/home.html" },
+    { "source": "/about", "destination": "/about.html" },
+    { "source": "/portfolio", "destination": "/photography.html" },
+    { "source": "/contact", "destination": "/hire.html" },
+    { "source": "/admin", "destination": "/api" },
+    { "source": "/admin/:match*", "destination": "/api" },
+    { "source": "/api/:match*", "destination": "/api" }
+  ]
+}
