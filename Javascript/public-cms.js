@@ -123,6 +123,13 @@
       container.hidden = container.childElementCount === 0;
     });
 
+    document.querySelectorAll("[data-content]").forEach((el) => {
+      const key = el.getAttribute("data-content");
+      if (key && typeof content[key] === "string") {
+        el.textContent = content[key];
+      }
+    });
+
     setText(content, "home.heroTitle", ".header__content h1");
     setText(content, "home.heroSubtitle", ".header__content h2");
     setText(content, "home.ctaText", ".header__btn .btn");
@@ -132,12 +139,15 @@
     setText(content, "about.title", ".about-content h1");
     setText(content, "about.description", "[data-content='about.description']");
     setText(content, "about.biography", "[data-content='about.biography']");
+    setText(content, "about.skillsTitle", "[data-content='about.skillsTitle']");
+    setText(content, "about.skillsDescription", "[data-content='about.skillsDescription']");
     setText(content, "portfolio.title", ".portfolio-header h1");
     setText(content, "portfolio.description", ".portfolio-header p");
     setText(content, "contact.title", ".hire-me > h1");
     setText(content, "contact.description", ".hire-me > p");
     setText(content, "contact.closingTitle", ".end-section h2");
     setText(content, "contact.closingDescription", ".end-section p");
+    setText(content, "footer.contactTitle", "[data-content='footer.contactTitle']");
     setText(content, "footer.introduction", "[data-content='footer.introduction']");
     setText(content, "footer.officeTitle", "[data-content='footer.officeTitle']");
     setText(content, "footer.socialTitle", "[data-content='footer.socialTitle']");
@@ -154,12 +164,40 @@
     setGalleryFilters(sections);
   }
 
+  function setMobileNavigationOpen(open) {
+    const nav = document.querySelector(".nav__links");
+    const button = document.querySelector(".nav__menu__btn");
+    const icon = button?.querySelector("i");
+    if (!nav || !button || !icon) return;
+
+    nav.classList.toggle("open", open);
+    button.setAttribute("aria-expanded", String(open));
+    button.setAttribute("aria-label", open ? "Close navigation" : "Open navigation");
+    icon.className = open ? "ri-close-line" : "ri-menu-3-line";
+  }
+
   document.addEventListener("click", (event) => {
-    if (event.target.closest(".nav__links a")) {
-      document.querySelector(".nav__links")?.classList.remove("open");
-      document.querySelector(".nav__menu__btn")?.setAttribute("aria-expanded", "false");
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+
+    const menuButton = target.closest(".nav__menu__btn");
+    if (menuButton) {
+      setMobileNavigationOpen(!document.querySelector(".nav__links")?.classList.contains("open"));
+      return;
+    }
+    if (target.closest(".nav__links a") || !target.closest(".site-header")) {
+      setMobileNavigationOpen(false);
     }
   });
+
+  window.addEventListener("resize", () => {
+    if (window.innerWidth > 768) setMobileNavigationOpen(false);
+  });
+
+  const header = document.querySelector(".site-header");
+  const updateHeaderOnScroll = () => header?.classList.toggle("scrolled", window.scrollY > 50);
+  window.addEventListener("scroll", updateHeaderOnScroll, { passive: true });
+  updateHeaderOnScroll();
 
   pageData.then(render).catch((error) => {
     console.error("Photography CMS:", error);

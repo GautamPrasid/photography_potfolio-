@@ -1,6 +1,4 @@
 document.addEventListener("DOMContentLoaded", async () => {
-  const menuBtn = document.querySelector(".nav__menu__btn");
-  const navLinks = document.querySelector(".nav__links");
   const gallery = document.getElementById("gallery");
   const loadMoreBtn = document.getElementById("load-more");
   const filters = document.querySelector("[data-gallery-filters]");
@@ -13,29 +11,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   let filter = "all";
   let loadedCount = 0;
   const batchSize = 6;
-
-  if (menuBtn && navLinks) {
-    menuBtn.addEventListener("click", () => {
-      const isOpen = navLinks.classList.toggle("open");
-      menuBtn.setAttribute("aria-expanded", String(isOpen));
-      menuBtn.setAttribute("aria-label", isOpen ? "Close navigation" : "Open navigation");
-      menuBtn.querySelector("i").className = isOpen ? "ri-close-line" : "ri-menu-3-line";
-    });
-    document.addEventListener("click", (event) => {
-      if (!event.target.closest(".nav__links") && !event.target.closest(".nav__menu__btn")) {
-        navLinks.classList.remove("open");
-        menuBtn.setAttribute("aria-expanded", "false");
-        menuBtn.querySelector("i").className = "ri-menu-3-line";
-      }
-    });
-    window.addEventListener("resize", () => {
-      if (window.innerWidth > 768) {
-        navLinks.classList.remove("open");
-        menuBtn.setAttribute("aria-expanded", "false");
-        menuBtn.querySelector("i").className = "ri-menu-3-line";
-      }
-    });
-  }
 
   function visiblePhotos() {
     return filter === "all" ? photos : photos.filter((photo) => photo.sections.includes(filter));
@@ -83,10 +58,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   try {
-    const data = await (window.siteDataPromise || fetch("/api/public/site").then((response) => {
-      if (!response.ok) throw new Error(`Portfolio could not be loaded (${response.status}).`);
-      return response.json();
-    }));
+    const data = await window.siteDataPromise;
     photos = [...new Map([...(data.photos.portfolio || []), ...(data.photos.gallery || [])]
       .map((photo) => [photo.id, photo])).values()];
     filters.addEventListener("click", (event) => {

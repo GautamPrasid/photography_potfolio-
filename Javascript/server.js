@@ -152,6 +152,8 @@ if (seedTransaction.count === 0) {
       "about.title": "About Me",
       "about.description": "I'm a creative professional based in Pokhara, Nepal, specializing in visual storytelling through photography and design. With a passion for capturing authentic moments, I strive to create work that resonates emotionally.",
       "about.biography": "My approach combines technical expertise with artistic vision, resulting in images that tell compelling stories. Whether working with clients or on personal projects, I bring dedication and creativity to every frame.",
+      "about.skillsTitle": "My Skills & Expertise",
+      "about.skillsDescription": "Here are the key areas where I excel in creating stunning visual content",
       "portfolio.title": "Photography Portfolio",
       "portfolio.description": "Explore my collection of carefully curated photographs from around the world",
       "contact.title": "Hire Me for Your Next Project",
@@ -161,6 +163,7 @@ if (seedTransaction.count === 0) {
       "contact.location": "FISTAIL HOUSING, BIRAUTA, POKHARA, NEPAL.",
       "contact.closingTitle": "Let's Work Together",
       "contact.closingDescription": "I'm available for freelance work and collaborations. Let's create something amazing that stands out!",
+      "footer.contactTitle": "Get In Touch",
       "footer.introduction": "Reach out for inquiries, collaborations, or just to say hello—I'd love to connect with you.",
       "footer.officeTitle": "Where's My Office?",
       "footer.socialTitle": "My Social Links",
@@ -246,6 +249,16 @@ if (seedTransaction.count === 0) {
   }
 }
 
+const defaultContentEntries = [
+  ["about.skillsTitle", "My Skills & Expertise"],
+  ["about.skillsDescription", "Here are the key areas where I excel in creating stunning visual content"],
+  ["footer.contactTitle", "Get In Touch"],
+];
+const insertMissingContent = db.prepare(
+  "INSERT OR IGNORE INTO site_content (content_key, content_value) VALUES (?, ?)",
+);
+defaultContentEntries.forEach(([key, value]) => insertMissingContent.run(key, value));
+
 const sessions = new Map();
 const loginAttempts = new Map();
 const MIME_BY_EXTENSION = new Map([
@@ -268,7 +281,7 @@ function sendJson(res, status, payload, headers = {}) {
     "X-Content-Type-Options": "nosniff",
     ...headers,
   });
-  res.end(JSON.stringify(payload));
+  return res.end(JSON.stringify(payload));
 }
 
 function readBody(req, limit = MAX_UPLOAD_BYTES + 64 * 1024) {

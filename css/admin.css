@@ -33,6 +33,12 @@
   padding: 2rem;
 }
 
+.admin-login-logo {
+  width: 7rem;
+  max-height: 4rem;
+  object-fit: contain;
+}
+
 .login-card h1 {
   margin-bottom: 0.5rem;
   font-size: 2rem;
@@ -170,15 +176,16 @@
   font-size: var(--font-size-small);
 }
 
-.quick-actions,
+.quick-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  gap: 1rem;
+}
+
 .admin-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1rem;
-}
-
-.quick-actions {
-  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
 }
 
 .admin-button,
@@ -228,12 +235,6 @@
   margin-bottom: 1rem;
 }
 
-.admin-toolbar input,
-.admin-toolbar select {
-  min-width: min(100%, 12rem);
-  flex: 1 1 12rem;
-}
-
 .admin-form {
   display: grid;
   gap: 1rem;
@@ -271,6 +272,12 @@
   background: var(--color-surface);
   color: var(--color-text);
   font-weight: 400;
+}
+
+.admin-toolbar input,
+.admin-toolbar select {
+  min-width: min(100%, 12rem);
+  flex: 1 1 12rem;
 }
 
 .admin-field textarea {
@@ -402,6 +409,11 @@
 
 .drag-row.dragging {
   opacity: 0.45;
+}
+
+.drag-handle {
+  user-select: none;
+  cursor: grab;
 }
 
 .admin-notice {
