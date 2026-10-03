@@ -555,17 +555,39 @@
   async function contentPage() {
     const content = await api("/api/admin/content");
     const view = template("content-view-template");
+<<<<<<< Updated upstream
     const form = view.querySelector("#content-form");
     for (const [key, value] of Object.entries(content)) {
       const field = form.elements.namedItem(key);
       if (field) field.value = value ?? "";
     }
+=======
+    const form = view.matches("#content-form") ? view : view.querySelector("#content-form");
+    if (!form) {
+      const notice = document.createElement("div");
+      notice.className = "admin-notice error";
+      notice.textContent = "Content form element is missing from the template.";
+      return layout("content", notice, "Website content");
+    }
+
+    for (const [key, value] of Object.entries(content)) {
+      const field = form.elements.namedItem(key);
+      if (field) field.value = value;
+    }
+
+>>>>>>> Stashed changes
     view.querySelectorAll("[data-content-save]").forEach((button) => {
       button.addEventListener("click", async () => {
         const prefix = button.dataset.contentSave;
         const payload = {};
         for (const element of form.elements) {
+<<<<<<< Updated upstream
           if (element.name && element.name.startsWith(prefix + ".")) payload[element.name] = element.value.trim();
+=======
+          if (element.name && element.name.startsWith(prefix + ".")) {
+            payload[element.name] = element.value.trim();
+          }
+>>>>>>> Stashed changes
         }
         try {
           button.disabled = true;
@@ -578,6 +600,7 @@
         }
       });
     });
+<<<<<<< Updated upstream
     layout("content", view, "Website Content");
   }
 
@@ -630,11 +653,86 @@
       await render();
     });
   }
+=======
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const payload = {};
+      for (const element of form.elements) {
+        if (element.name) payload[element.name] = element.value.trim();
+      }
+      try {
+        await api("/api/admin/content", { method: "PUT", body: JSON.stringify(payload) });
+        message("All website content saved.");
+      } catch (error) {
+        message(error.message, true);
+      }
+    });
+
+    layout("content", view, "Website content");
+  }
+
+>>>>>>> Stashed changes
   async function skillsPage() {
     const skills = await api("/api/admin/skills");
     const view = template("skills-view-template");
     renderSkills(skills, view);
     layout("skills", view, "Skills & Expertise");
+  }
+
+  function renderSkills(skills, view) {
+    const rows = view.querySelector("#skill-rows");
+    if (!rows) return;
+    rows.replaceChildren();
+    skills.forEach((skill) => {
+      const row = template("skill-row-template");
+      setActionId(row, skill.id);
+      const iconEl = row.querySelector("[data-skill-icon]");
+      if (iconEl) iconEl.className = skill.icon;
+      row.querySelector("[data-skill-name]").textContent = skill.name;
+      row.querySelector("[data-skill-percent]").textContent = `${skill.percent}%`;
+      row.querySelector("[data-skill-visibility]").replaceChildren(pill(skill.visible, "Visible", "Hidden"));
+      row.querySelector("[data-skill-order]").textContent = skill.displayOrder;
+      row.querySelector('[data-action="toggle-skill"]').textContent = skill.visible ? "Hide" : "Show";
+      rows.append(row);
+    });
+    if (!skills.length) {
+      const empty = document.createElement("tr");
+      const cell = document.createElement("td");
+      cell.colSpan = 7;
+      cell.className = "admin-empty";
+      cell.textContent = "No skills found. Use \"+ Add Skill\" above to create one.";
+      empty.append(cell);
+      rows.append(empty);
+    }
+    setupDragSort(rows, "/api/admin/skills", skills);
+  }
+
+  async function skillDialog(skill = null) {
+    const form = template("skill-dialog-form-template");
+    if (skill) {
+      form.elements.namedItem("name").value = skill.name || "";
+      form.elements.namedItem("percent").value = skill.percent ?? 80;
+      form.elements.namedItem("icon").value = skill.icon || "ri-star-line";
+      form.elements.namedItem("displayOrder").value = skill.displayOrder ?? 0;
+      form.elements.namedItem("visible").checked = Boolean(skill.visible);
+      form.querySelector("[data-submit-label]").textContent = "Save skill";
+    }
+    showDialog(skill ? "Edit skill" : "Add skill", form, async (dialogForm) => {
+      const payload = {
+        name: formValue(dialogForm, "name"),
+        percent: parseInt(formValue(dialogForm, "percent"), 10),
+        icon: formValue(dialogForm, "icon"),
+        displayOrder: parseInt(formValue(dialogForm, "displayOrder") || "0", 10),
+        visible: dialogForm.elements.namedItem("visible").checked,
+      };
+      await api(skill ? `/api/admin/skills/${encodeURIComponent(skill.id)}` : "/api/admin/skills", {
+        method: skill ? "PUT" : "POST",
+        body: JSON.stringify(payload),
+      });
+      message(skill ? "Skill updated." : "Skill added.");
+      await render();
+    });
   }
 
   async function socialPage() {

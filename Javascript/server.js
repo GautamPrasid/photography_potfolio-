@@ -575,7 +575,7 @@ function handleAdminApi(req, res, url) {
       publishedPhotos: count("SELECT COUNT(*) AS count FROM portfolio_items WHERE is_published = 1 AND is_hidden = 0"),
       draftPhotos: count("SELECT COUNT(*) AS count FROM portfolio_items WHERE is_published = 0"),
       featuredPhotos: count("SELECT COUNT(*) AS count FROM portfolio_items WHERE is_featured = 1"),
-      sections: count("SELECT COUNT(*) AS count FROM sections WHERE is_system = 0"),
+      skills: count("SELECT COUNT(*) AS count FROM skills"),
       socialLinks: count("SELECT COUNT(*) AS count FROM social_links"),
       navigationItems: count("SELECT COUNT(*) AS count FROM navigation_items"),
     });
