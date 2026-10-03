@@ -1,4 +1,4 @@
-# Dear Praa Photography CMS
+# Photography Portfolio CMS
 
 The public pages use CMS data from `/api/public/site`. Run the Node.js server locally or deploy the project to Vercel; opening the HTML files directly or serving them as a static-only site will not load this data or the admin API.
 
