@@ -170,171 +170,22 @@ if (!mediaColumns.some((column) => column.name === "ai_metadata")) {
   db.exec("ALTER TABLE media ADD COLUMN ai_metadata TEXT");
 }
 
-// Guard: seed skills table the first time (or if it was just created empty)
-const skillsCount = db.prepare("SELECT COUNT(*) AS count FROM skills").get();
-if (skillsCount.count === 0) {
-  db.exec("BEGIN");
-  try {
-    const insertSkill = db.prepare(
-      "INSERT INTO skills (id, name, percent, icon, display_order, is_visible) VALUES (?, ?, ?, ?, ?, 1)",
-    );
-    [
-      ["skill-photography",  "Photography",    95, "ri-camera-line",     0],
-      ["skill-editing",      "Photo Editing",   90, "ri-edit-line",       1],
-      ["skill-lightroom",    "Lightroom",       85, "ri-contrast-line",   2],
-      ["skill-photoshop",    "Photoshop",       80, "ri-image-edit-line", 3],
-      ["skill-video",        "Video Editing",   75, "ri-video-line",      4],
-      ["skill-design",       "Creative Design", 88, "ri-palette-line",    5],
-    ].forEach((row) => insertSkill.run(...row));
-    db.exec("COMMIT");
-  } catch (seedError) {
-    db.exec("ROLLBACK");
-    throw seedError;
-  }
+// The database is intentionally content-empty on first startup.
+// Only the built-in display locations required by the public site are initialized.
+const systemSectionsCount = db.prepare("SELECT COUNT(*) AS count FROM sections WHERE is_system = 1").get();
+if (systemSectionsCount.count === 0) {
+  const insertSystemSection = db.prepare(
+    "INSERT OR IGNORE INTO sections (id, name, title, description, slug, display_order, is_system) VALUES (?, ?, ?, '', ?, ?, 1)",
+  );
+  [
+    ["home", "Homepage", "Homepage", "homepage", 0],
+    ["portfolio", "Portfolio", "Portfolio", "portfolio", 1],
+    ["gallery", "Gallery", "Gallery", "gallery", 2],
+    ["featured", "Featured", "Featured", "featured", 3],
+    ["about", "About", "About", "about", 4],
+    ["contact", "Contact", "Contact", "contact", 5],
+  ].forEach((section) => insertSystemSection.run(...section));
 }
-
-const seedTransaction = db.prepare("SELECT COUNT(*) AS count FROM sections").get();
-if (seedTransaction.count === 0) {
-  db.exec("BEGIN");
-  try {
-    const insertSection = db.prepare(`
-      INSERT INTO sections (id, name, title, description, slug, display_order, is_system)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
-    const sections = [
-      ["home", "Homepage", "Homepage", "", "homepage", 0, 1],
-      ["portfolio", "Portfolio", "Portfolio", "", "portfolio", 1, 1],
-      ["gallery", "Gallery", "Gallery", "", "gallery", 2, 1],
-      ["featured", "Featured", "Featured", "", "featured", 3, 1],
-      ["about", "About", "About", "", "about", 4, 1],
-      ["contact", "Contact", "Contact", "", "contact", 5, 1],
-      ["nature", "Nature", "Nature", "", "nature", 6, 0],
-      ["portrait", "Portrait", "Portrait", "", "portrait", 7, 0],
-      ["urban", "Urban", "Urban", "", "urban", 8, 0],
-      ["travel", "Travel", "Travel", "", "travel", 9, 0],
-      ["blackwhite", "B&W", "Black & White", "", "blackwhite", 10, 0],
-    ];
-    sections.forEach((section) => insertSection.run(...section));
-
-    const insertContent = db.prepare(
-      "INSERT INTO site_content (content_key, content_value) VALUES (?, ?)",
-    );
-    const content = {
-      "home.heroTitle": "Photographer & Film Maker",
-      "home.heroSubtitle": "POKHARA, NEPAL",
-      "home.introduction": "Hi, I’m Prajwol Gautam — also known as Dear Praa.",
-      "home.portfolioTitle": "Portfolio",
-      "home.portfolioDescription": "A selection of my photography.",
-      "home.ctaText": "HIRE ME",
-      "about.title": "About Me",
-      "about.description": "I'm a creative professional based in Pokhara, Nepal, specializing in visual storytelling through photography and design. With a passion for capturing authentic moments, I strive to create work that resonates emotionally.",
-      "about.biography": "My approach combines technical expertise with artistic vision, resulting in images that tell compelling stories. Whether working with clients or on personal projects, I bring dedication and creativity to every frame.",
-      "about.skillsTitle": "My Skills & Expertise",
-      "about.skillsDescription": "Here are the key areas where I excel in creating stunning visual content",
-      "portfolio.title": "Photography Portfolio",
-      "portfolio.description": "Explore my collection of carefully curated photographs from around the world",
-      "contact.title": "Hire Me for Your Next Project",
-      "contact.description": "I'm passionate about delivering high-quality work with creativity and dedication. Let's collaborate to bring your vision to life!",
-      "contact.email": "gautamprajwol22@gmail.com",
-      "contact.phone": "+971 54 519 2239",
-      "contact.location": "FISTAIL HOUSING, BIRAUTA, POKHARA, NEPAL.",
-      "contact.closingTitle": "Let's Work Together",
-      "contact.closingDescription": "I'm available for freelance work and collaborations. Let's create something amazing that stands out!",
-      "footer.contactTitle": "Get In Touch",
-      "footer.introduction": "Reach out for inquiries, collaborations, or just to say hello—I'd love to connect with you.",
-      "footer.officeTitle": "Where's My Office?",
-      "footer.socialTitle": "My Social Links",
-      "footer.copyright": "Copyright © 2025 Deeznotfound. All rights reserved.",
-    };
-    Object.entries(content).forEach(([key, value]) => insertContent.run(key, value));
-
-    const insertNav = db.prepare(`
-      INSERT INTO navigation_items (id, label, url, icon, display_order)
-      VALUES (?, ?, ?, ?, ?)
-    `);
-    [
-      ["home", "Home", "home.html", "", 0],
-      ["about", "About", "about.html", "", 1],
-      ["portfolio", "Portfolio", "photography.html", "", 2],
-      ["hire", "Hire Me", "hire.html", "", 3],
-    ].forEach((item) => insertNav.run(...item));
-
-    const insertSocial = db.prepare(`
-      INSERT INTO social_links (id, platform, display_name, url, icon, display_order)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `);
-    const insertSocialLocation = db.prepare(`
-      INSERT INTO social_link_locations (social_link_id, location)
-      VALUES (?, 'footer')
-    `);
-    const socials = [
-      ["facebook", "Facebook", "Facebook", "https://www.facebook.com/prajwol.gautam.35", "ri-facebook-fill"],
-      ["tiktok", "TikTok", "TikTok", "https://www.tiktok.com/@prajwolgautam72", "ri-tiktok-line"],
-      ["instagram", "Instagram", "Instagram", "https://www.instagram.com/mr.praajwol/", "ri-instagram-line"],
-      ["youtube", "YouTube", "YouTube", "https://www.youtube.com/@PrajwolGautam", "ri-youtube-fill"],
-      ["whatsapp", "WhatsApp", "WhatsApp", "https://wa.me/9779841234567", "ri-whatsapp-line"],
-    ];
-    socials.forEach((social, index) => {
-      insertSocial.run(...social, index);
-      insertSocialLocation.run(social[0]);
-    });
-
-    const insertMedia = db.prepare(`
-      INSERT INTO media (id, file_name, file_url, mime_type, alt_text)
-      VALUES (?, ?, ?, ?, ?)
-    `);
-    const insertItem = db.prepare(`
-      INSERT INTO portfolio_items
-        (id, media_id, title, description, category, is_published, display_order)
-      VALUES (?, ?, ?, ?, ?, 1, ?)
-    `);
-    const insertItemSection = db.prepare(`
-      INSERT INTO portfolio_item_sections (portfolio_item_id, section_id) VALUES (?, ?)
-    `);
-    const existingPhotos = [
-      ["portfolio-1.png", "Mountain View", "Beautiful mountain landscape", "nature"],
-      ["portfolio-2.png", "City View", "Urban architecture", "urban"],
-      ["portfolio-3.png", "Portrait", "Portrait photography", "portrait"],
-      ["portfolio-4.png", "Travel", "Travel photography", "travel"],
-      ["portfolio-5.png", "Nature", "Nature photography", "nature"],
-      ["portfolio-6.jpg", "Monochrome", "Black and white photography", "blackwhite"],
-      ["portfolio-7.png", "Street", "Urban life", "urban"],
-      ["portfolio-8.jpg", "Landscape View", "Natural landscape", "nature"],
-      ["portfolio-9.jpg", "Journey", "Travel scene", "travel"],
-      ["portfolio-10.jpg", "Portrait Art", "Portrait study", "portrait"],
-      ["portfolio-11.jpg", "Black & White", "Monochrome photography", "blackwhite"],
-      ["portfolio-12.jpg", "Urban Landscape", "City architecture", "urban"],
-    ];
-    existingPhotos.forEach(([fileName, title, description, category], index) => {
-      const itemId = crypto.randomUUID();
-      const mediaId = crypto.randomUUID();
-      const filePath = path.join(ROOT, "assets", fileName);
-      if (!fs.existsSync(filePath)) return;
-      const ext = path.extname(fileName).toLowerCase();
-      const mime = ext === ".png" ? "image/png" : "image/jpeg";
-      insertMedia.run(mediaId, fileName, `/assets/${encodeURIComponent(fileName)}`, mime, description);
-      insertItem.run(itemId, mediaId, title, description, category, index);
-      insertItemSection.run(itemId, "portfolio");
-      insertItemSection.run(itemId, "gallery");
-      insertItemSection.run(itemId, category);
-      if (index < 7) insertItemSection.run(itemId, "home");
-    });
-    db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
-  }
-}
-
-const defaultContentEntries = [
-  ["about.skillsTitle", "My Skills & Expertise"],
-  ["about.skillsDescription", "Here are the key areas where I excel in creating stunning visual content"],
-  ["footer.contactTitle", "Get In Touch"],
-];
-const insertMissingContent = db.prepare(
-  "INSERT OR IGNORE INTO site_content (content_key, content_value) VALUES (?, ?)",
-);
-defaultContentEntries.forEach(([key, value]) => insertMissingContent.run(key, value));
 
 const loginAttempts = new Map();
 const aiAnalysisCooldowns = new Map();
