@@ -11,6 +11,61 @@
     if (element && typeof content[key] === "string") element.textContent = content[key];
   }
 
+  function setDbImage(role, photo) {
+    const container = document.querySelector(`[data-db-image="${role}"]`);
+    if (!container) return;
+    const image = container.querySelector("img");
+    if (!photo || !image) {
+      container.hidden = true;
+      return;
+    }
+    image.src = photo.imageUrl;
+    image.alt = photo.altText || photo.description || photo.title || "";
+    container.hidden = false;
+  }
+
+  function setSkills(skills) {
+    const grid = document.querySelector("[data-db-skills]");
+    if (!grid) return;
+    grid.replaceChildren();
+    const section = grid.closest(".skills-container");
+    if (!Array.isArray(skills) || skills.length === 0) {
+      if (section) section.hidden = true;
+      return;
+    }
+    if (section) section.hidden = false;
+    skills.forEach((skill) => {
+      const item = document.createElement("div");
+      item.className = "skill-item";
+      const icon = document.createElement("div");
+      icon.className = "skill-icon";
+      const iconElement = document.createElement("i");
+      iconElement.className = skill.icon || "ri-star-line";
+      iconElement.setAttribute("aria-hidden", "true");
+      icon.append(iconElement);
+      const info = document.createElement("div");
+      info.className = "skill-info";
+      const name = document.createElement("div");
+      name.className = "skill-name";
+      const label = document.createElement("span");
+      label.textContent = skill.name;
+      const percent = document.createElement("span");
+      percent.className = "skill-percent";
+      percent.textContent = `${skill.percent}%`;
+      name.append(label, percent);
+      const bar = document.createElement("div");
+      bar.className = "skill-bar";
+      const progress = document.createElement("div");
+      progress.className = "skill-progress";
+      progress.dataset.width = String(skill.percent);
+      progress.style.width = `${skill.percent}%`;
+      bar.append(progress);
+      info.append(name, bar);
+      item.append(icon, info);
+      grid.append(item);
+    });
+  }
+
   function makeSocialLink(link) {
     const anchor = document.createElement("a");
     anchor.href = link.url;
@@ -87,7 +142,7 @@
   }
 
   function render(data) {
-    const { content, navigation, socialLinks, photos, sections } = data;
+    const { content, navigation, socialLinks, photos, sections, skills } = data;
     const nav = document.querySelector(".nav__links");
     if (nav) {
       nav.replaceChildren();
