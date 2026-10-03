@@ -89,7 +89,7 @@ async function analyzePhoto(imagePath, mimeType) {
     throw Object.assign(new Error("Only the Gemini AI provider is currently supported."), { status: 400 });
   }
 
-  const model = process.env.AI_MODEL || "gemini-2.0-flash";
+  const model = process.env.AI_MODEL || "gemini-flash-latest";
 
   // Read image from disk (never from a URL)
   if (!fs.existsSync(imagePath)) {
