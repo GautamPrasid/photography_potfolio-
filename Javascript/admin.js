@@ -71,6 +71,11 @@
     }
     if (!response.ok) {
       const errorMessage = typeof body === "object" && body !== null ? body.error : "";
+      if (response.status === 401 && !url.includes("/api/auth/session")) {
+        currentUser = "";
+        message(errorMessage || "Authentication required. Please log in again.", true);
+        navigate("login", true);
+      }
       throw new Error(errorMessage || `Request failed (${response.status}).`);
     }
     return body;
@@ -108,10 +113,11 @@
     return routes.has(name) ? name : "dashboard";
   }
 
-  function navigate(route) {
+  function navigate(route, preserveMessage = false) {
+    document.querySelectorAll(".admin-dialog-backdrop").forEach((backdrop) => backdrop.remove());
     const target = route === "login" ? "/admin/login" : `/admin/${route}`;
     history.pushState({}, "", target);
-    clearMessage();
+    if (!preserveMessage) clearMessage();
     render();
   }
 
