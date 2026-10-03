@@ -555,13 +555,6 @@
   async function contentPage() {
     const content = await api("/api/admin/content");
     const view = template("content-view-template");
-<<<<<<< Updated upstream
-    const form = view.querySelector("#content-form");
-    for (const [key, value] of Object.entries(content)) {
-      const field = form.elements.namedItem(key);
-      if (field) field.value = value ?? "";
-    }
-=======
     const form = view.matches("#content-form") ? view : view.querySelector("#content-form");
     if (!form) {
       const notice = document.createElement("div");
@@ -575,19 +568,14 @@
       if (field) field.value = value;
     }
 
->>>>>>> Stashed changes
     view.querySelectorAll("[data-content-save]").forEach((button) => {
       button.addEventListener("click", async () => {
         const prefix = button.dataset.contentSave;
         const payload = {};
         for (const element of form.elements) {
-<<<<<<< Updated upstream
-          if (element.name && element.name.startsWith(prefix + ".")) payload[element.name] = element.value.trim();
-=======
           if (element.name && element.name.startsWith(prefix + ".")) {
             payload[element.name] = element.value.trim();
           }
->>>>>>> Stashed changes
         }
         try {
           button.disabled = true;
@@ -600,7 +588,24 @@
         }
       });
     });
-<<<<<<< Updated upstream
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const payload = {};
+      for (const element of form.elements) {
+        if (element.name) payload[element.name] = element.value.trim();
+      }
+      try {
+        await api("/api/admin/content", { method: "PUT", body: JSON.stringify(payload) });
+        message("All website content saved.");
+      } catch (error) {
+        message(error.message, true);
+      }
+    });
+
+    layout("content", view, "Website content");
+  }
+
     layout("content", view, "Website Content");
   }
 
@@ -653,26 +658,6 @@
       await render();
     });
   }
-=======
-
-    form.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const payload = {};
-      for (const element of form.elements) {
-        if (element.name) payload[element.name] = element.value.trim();
-      }
-      try {
-        await api("/api/admin/content", { method: "PUT", body: JSON.stringify(payload) });
-        message("All website content saved.");
-      } catch (error) {
-        message(error.message, true);
-      }
-    });
-
-    layout("content", view, "Website content");
-  }
-
->>>>>>> Stashed changes
   async function skillsPage() {
     const skills = await api("/api/admin/skills");
     const view = template("skills-view-template");
