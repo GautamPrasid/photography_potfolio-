@@ -73,7 +73,7 @@ excludes(shared, 'section-dialog-form-template', "section dialog removed");
 excludes(adminJs, "galleryOnly", "admin.js gallery mode removed");
 excludes(adminJs, "sectionPage", "admin.js section page removed");
 excludes(adminJs, "add-section", "admin.js section action removed");
-excludes(adminJs, "data-content-save", "admin.js save handler does not belong outside contentPage");
+includes(adminJs, "data-content-save", "admin.js content save handler");
 includes(adminJs, 'skills: skillsPage', "admin.js skills route");
 
 excludes(server, '"/admin/gallery"', "server gallery route removed");
