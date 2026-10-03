@@ -170,41 +170,21 @@
     });
     const form = backdrop.querySelector("form");
     if (form && onSubmit) {
-      view.querySelectorAll("[data-content-save]").forEach((button) => {
-      button.addEventListener("click", async () => {
-        const prefix = button.dataset.contentSave;
-        const payload = {};
-        for (const element of form.elements) {
-          if (element.name && element.name.startsWith(prefix + ".")) payload[element.name] = element.value.trim();
-        }
-        try {
-          button.disabled = true;
-          await api("/api/admin/content", { method: "PUT", body: JSON.stringify(payload) });
-          message(prefix.charAt(0).toUpperCase() + prefix.slice(1) + " website content saved.");
-        } catch (error) {
-          message(error.message, true);
-        } finally {
-          button.disabled = false;
-        }
-      });
-    });
-
-    form.addEventListener("submit", async (event) => {
+      form.addEventListener("submit", async (event) => {
         event.preventDefault();
         const submit = form.querySelector('[type="submit"]');
-        submit.disabled = true;
+        if (submit) submit.disabled = true;
         try {
           await onSubmit(form);
           backdrop.remove();
         } catch (error) {
-          submit.disabled = false;
+          if (submit) submit.disabled = false;
           message(error.message, true);
         }
       });
     }
     return backdrop;
   }
-
   function setupDragSort(tbody, endpoint, values) {
     if (!tbody) return;
     tbody.addEventListener("dragstart", (event) => {
@@ -572,6 +552,84 @@
     });
   }
 
+  async function contentPage() {
+    const content = await api("/api/admin/content");
+    const view = template("content-view-template");
+    const form = view.querySelector("#content-form");
+    for (const [key, value] of Object.entries(content)) {
+      const field = form.elements.namedItem(key);
+      if (field) field.value = value ?? "";
+    }
+    view.querySelectorAll("[data-content-save]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const prefix = button.dataset.contentSave;
+        const payload = {};
+        for (const element of form.elements) {
+          if (element.name && element.name.startsWith(prefix + ".")) payload[element.name] = element.value.trim();
+        }
+        try {
+          button.disabled = true;
+          await api("/api/admin/content", { method: "PUT", body: JSON.stringify(payload) });
+          message(prefix.charAt(0).toUpperCase() + prefix.slice(1) + " website content saved.");
+        } catch (error) {
+          message(error.message, true);
+        } finally {
+          button.disabled = false;
+        }
+      });
+    });
+    layout("content", view, "Website Content");
+  }
+
+  function renderSkills(skills, view) {
+    const rows = view.querySelector("#skill-rows");
+    skills.forEach((skill) => {
+      const row = template("skill-row-template");
+      setActionId(row, skill.id);
+      row.querySelector("[data-skill-icon]").className = skill.icon || "ri-star-line";
+      row.querySelector("[data-skill-name]").textContent = skill.name;
+      row.querySelector("[data-skill-percent]").textContent = skill.percent + "%";
+      row.querySelector("[data-skill-visibility]").replaceChildren(pill(skill.visible, "Visible", "Hidden"));
+      row.querySelector("[data-skill-order]").textContent = skill.displayOrder;
+      row.querySelector('[data-action="toggle-skill"]').textContent = skill.visible ? "Hide" : "Show";
+      rows.append(row);
+    });
+    if (!skills.length) {
+      const empty = document.createElement("tr");
+      const cell = document.createElement("td");
+      cell.colSpan = 7;
+      cell.className = "admin-empty";
+      cell.textContent = "No skills configured.";
+      empty.append(cell);
+      rows.append(empty);
+    }
+    setupDragSort(rows, "/api/admin/skills", skills);
+  }
+
+  async function skillDialog(skill = null) {
+    const form = template("skill-dialog-form-template");
+    if (skill) {
+      form.elements.namedItem("name").value = skill.name || "";
+      form.elements.namedItem("percent").value = skill.percent ?? 80;
+      form.elements.namedItem("icon").value = skill.icon || "ri-star-line";
+      form.elements.namedItem("displayOrder").value = skill.displayOrder ?? 0;
+      form.elements.namedItem("visible").checked = Boolean(skill.visible);
+      form.querySelector("[data-submit-label]").textContent = "Save skill";
+    }
+    showDialog(skill ? "Edit skill" : "Add skill", form, async (dialogForm) => {
+      const payload = {
+        name: formValue(dialogForm, "name"),
+        percent: formValue(dialogForm, "percent"),
+        icon: formValue(dialogForm, "icon"),
+        displayOrder: formValue(dialogForm, "displayOrder"),
+        visible: dialogForm.elements.namedItem("visible").checked,
+      };
+      const endpoint = skill ? "/api/admin/skills/" + encodeURIComponent(skill.id) : "/api/admin/skills";
+      await api(endpoint, { method: skill ? "PUT" : "POST", body: JSON.stringify(payload) });
+      message(skill ? "Skill updated." : "Skill added.");
+      await render();
+    });
+  }
   async function skillsPage() {
     const skills = await api("/api/admin/skills");
     const view = template("skills-view-template");
