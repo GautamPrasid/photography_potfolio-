@@ -14,8 +14,6 @@
     { "source": "/admin/login", "destination": "/admin/admin.html" },
     { "source": "/admin/dashboard", "destination": "/admin/admin.html" },
     { "source": "/admin/portfolio", "destination": "/admin/admin.html" },
-    { "source": "/admin/gallery", "destination": "/admin/admin.html" },
-    { "source": "/admin/sections", "destination": "/admin/admin.html" },
     { "source": "/admin/content", "destination": "/admin/admin.html" },
     { "source": "/admin/social", "destination": "/admin/admin.html" },
     { "source": "/admin/navigation", "destination": "/admin/admin.html" },
