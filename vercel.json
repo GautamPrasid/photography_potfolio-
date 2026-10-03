@@ -15,6 +15,7 @@
     { "source": "/admin/dashboard", "destination": "/admin/admin.html" },
     { "source": "/admin/portfolio", "destination": "/admin/admin.html" },
     { "source": "/admin/content", "destination": "/admin/admin.html" },
+    { "source": "/admin/skills", "destination": "/admin/admin.html" },
     { "source": "/admin/social", "destination": "/admin/admin.html" },
     { "source": "/admin/navigation", "destination": "/admin/admin.html" },
     { "source": "/admin/media", "destination": "/admin/admin.html" },
