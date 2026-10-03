@@ -16,11 +16,11 @@ The public pages use CMS data from `/api/public/site`. Run the Node.js server lo
 
 Do not open `home.html` with VS Code Live Server (usually port `5500`). Live Server only serves static files and does not provide `/api/public/site`, so the page's CMS content will be missing. Use the Node.js server above and open `http://localhost:3000/home.html` instead.
 
-The local SQLite database is stored in `data/portfolio.sqlite`, and uploaded images are stored in `uploads/`. Back up both directories together. The first database initialization imports the portfolio images already present in `assets/`.
+The SQLite database is the source of website content. A fresh database starts without portfolio photos, skills, social links, navigation, or sample copy; add real content through the admin CMS. Uploaded images are stored in `uploads/`.
 
 ## Deploy to Vercel
 
-Import this repository into Vercel with the repository root as the project root. Vercel uses `vercel.json` to route public paths and the `/api/*` requests to the serverless handler. The function explicitly includes the seed images from `assets/`, which it needs when initializing its database.
+Import this repository into Vercel with the repository root as the project root. Vercel uses `vercel.json` to route public paths and the `/api/*` requests to the serverless handler. The function does not seed demo images or website content; production content must come from the database and CMS.
 
 ### Environment Variables on Vercel
 When deploying to Vercel (or when `NODE_ENV=production`), the application enforces strict production security and will refuse to start if any of the following variables are missing:
