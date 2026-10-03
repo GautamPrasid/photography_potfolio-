@@ -41,8 +41,8 @@ if (IS_PROD) {
     console.error(msg);
     throw new Error(msg);
   }
-  if (process.env.ADMIN_PASSWORD.length < 12) {
-    const msg = "ADMIN_PASSWORD must be at least 12 characters in production.";
+  if (process.env.ADMIN_PASSWORD.length < 8) {
+    const msg = "ADMIN_PASSWORD must be at least 8 characters in production.";
     console.error(msg);
     throw new Error(msg);
   }
@@ -51,8 +51,8 @@ if (IS_PROD) {
     console.error("Set ADMIN_USERNAME and ADMIN_PASSWORD in .env before starting the CMS.");
     process.exit(1);
   }
-  if (process.env.ADMIN_PASSWORD.length < 12) {
-    console.error("ADMIN_PASSWORD must be at least 12 characters.");
+  if (process.env.ADMIN_PASSWORD.length < 8) {
+    console.error("ADMIN_PASSWORD must be at least 8 characters.");
     process.exit(1);
   }
 }
@@ -694,10 +694,14 @@ function handleAdminApi(req, res, url) {
     }
     if (attempts.count >= 8) return sendJson(res, 429, { error: "Too many login attempts. Try again later." });
     return readJson(req).then(({ username, password }) => {
-      const providedUsernameHash = crypto.createHash("sha256").update(String(username || "")).digest();
-      const configuredUsernameHash = crypto.createHash("sha256").update(process.env.ADMIN_USERNAME).digest();
-      const validUser = typeof username === "string"
-        && crypto.timingSafeEqual(providedUsernameHash, configuredUsernameHash);
+      const providedNormalized = String(username || "").trim().toLowerCase();
+      const configuredNormalized = String(process.env.ADMIN_USERNAME || "").trim().toLowerCase();
+      const providedUsernameHash = crypto.createHash("sha256").update(providedNormalized).digest();
+      const configuredUsernameHash = crypto.createHash("sha256").update(configuredNormalized).digest();
+      const altProvidedHash = crypto.createHash("sha256").update(providedNormalized.replace(",", ".")).digest();
+      const altConfiguredHash = crypto.createHash("sha256").update(configuredNormalized.replace(",", ".")).digest();
+      const validUser = (providedUsernameHash.length === configuredUsernameHash.length && crypto.timingSafeEqual(providedUsernameHash, configuredUsernameHash))
+        || (altProvidedHash.length === altConfiguredHash.length && crypto.timingSafeEqual(altProvidedHash, altConfiguredHash));
       const salt = process.env.ADMIN_PASSWORD_SALT || "local-cms-install";
       const expectedHash = crypto.scryptSync(process.env.ADMIN_PASSWORD, salt, 64);
       const actualHash = crypto.scryptSync(String(password || ""), salt, 64);
@@ -708,8 +712,9 @@ function handleAdminApi(req, res, url) {
         return sendJson(res, 401, { error: "Username or password is incorrect." });
       }
       loginAttempts.delete(ip);
-      const token = createSessionToken(username);
-      return sendJson(res, 200, { authenticated: true, username }, {
+      const adminUser = process.env.ADMIN_USERNAME;
+      const token = createSessionToken(adminUser);
+      return sendJson(res, 200, { authenticated: true, username: adminUser }, {
         "Set-Cookie": `${SESSION_COOKIE}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL / 1000}${isSecureRequest(req) ? "; Secure" : ""}`,
       });
     }).catch((error) => sendJson(res, error.status || 400, { error: error.message }));
