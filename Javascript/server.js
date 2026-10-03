@@ -7,6 +7,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
 const { DatabaseSync } = require("node:sqlite");
+const { analyzePhoto } = require("./ai-photo-service.js");
 
 const ROOT = path.resolve(__dirname, "..");
 const IS_VERCEL = Boolean(process.env.VERCEL);
@@ -68,7 +69,8 @@ db.exec(`
     file_url TEXT NOT NULL UNIQUE,
     mime_type TEXT NOT NULL,
     alt_text TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ai_metadata TEXT
   );
   CREATE TABLE IF NOT EXISTS sections (
     id TEXT PRIMARY KEY,
@@ -139,6 +141,11 @@ db.exec(`
 const portfolioColumns = db.prepare("PRAGMA table_info(portfolio_items)").all();
 if (!portfolioColumns.some((column) => column.name === "is_hidden")) {
   db.exec("ALTER TABLE portfolio_items ADD COLUMN is_hidden INTEGER NOT NULL DEFAULT 0");
+}
+
+const mediaColumns = db.prepare("PRAGMA table_info(media)").all();
+if (!mediaColumns.some((column) => column.name === "ai_metadata")) {
+  db.exec("ALTER TABLE media ADD COLUMN ai_metadata TEXT");
 }
 
 const seedTransaction = db.prepare("SELECT COUNT(*) AS count FROM sections").get();
@@ -286,6 +293,7 @@ defaultContentEntries.forEach(([key, value]) => insertMissingContent.run(key, va
 
 const sessions = new Map();
 const loginAttempts = new Map();
+const aiAnalysisCooldowns = new Map();
 const MIME_BY_EXTENSION = new Map([
   [".html", "text/html; charset=utf-8"],
   [".css", "text/css; charset=utf-8"],
@@ -384,6 +392,8 @@ function serializePortfolioItem(row) {
     imageUrl: row.file_url,
     fileName: row.file_name,
     mimeType: row.mime_type,
+    altText: row.alt_text || "",
+    aiMetadata: row.ai_metadata || null,
     title: row.title,
     description: row.description,
     category: row.category,
@@ -399,7 +409,7 @@ function serializePortfolioItem(row) {
 }
 
 const portfolioSelect = `
-  SELECT p.*, m.file_name, m.file_url, m.mime_type,
+  SELECT p.*, m.file_name, m.file_url, m.mime_type, m.alt_text, m.ai_metadata,
     GROUP_CONCAT(s.slug) AS sections
   FROM portfolio_items p
   JOIN media m ON m.id = p.media_id
@@ -692,6 +702,10 @@ function handleAdminApi(req, res, url) {
   if (mediaMatch && req.method === "PATCH") return handleMediaEdit(req, res, mediaMatch[1]);
   if (mediaMatch && req.method === "PUT") return handleMediaReplace(req, res, mediaMatch[1]);
 
+  if (pathname === "/api/admin/ai/analyze-photo" && req.method === "POST") {
+    return handleAiAnalyze(req, res);
+  }
+
   return sendJson(res, 404, { error: "Admin API route not found." });
 }
 
@@ -777,6 +791,12 @@ async function handlePortfolioWrite(req, res, id) {
         );
       }
       saveLocations(itemId, [...sections]);
+      if (newMediaId) {
+        const altText = typeof body.altText === "string" ? body.altText.trim() : String(body.description || "").trim();
+        const aiMeta = typeof body.aiMetadata === "string" ? body.aiMetadata : (body.aiMetadata ? JSON.stringify(body.aiMetadata) : null);
+        db.prepare("UPDATE media SET alt_text = ?, ai_metadata = COALESCE(?, ai_metadata) WHERE id = ?")
+          .run(altText, aiMeta, newMediaId);
+      }
       db.exec("COMMIT");
     } catch (error) {
       db.exec("ROLLBACK");
@@ -995,10 +1015,63 @@ async function handleMediaEdit(req, res, id) {
     if (!fileName || fileName.length > 255 || /[\\/\r\n]/.test(fileName) || altText.length > 1000) {
       return sendJson(res, 400, { error: "Provide a valid display filename and alt text." });
     }
-    db.prepare("UPDATE media SET file_name = ?, alt_text = ? WHERE id = ?").run(fileName, altText, id);
+    if (typeof body.aiMetadata === "string" || body.aiMetadata === null) {
+      db.prepare("UPDATE media SET file_name = ?, alt_text = ?, ai_metadata = ? WHERE id = ?")
+        .run(fileName, altText, body.aiMetadata, id);
+    } else {
+      db.prepare("UPDATE media SET file_name = ?, alt_text = ? WHERE id = ?").run(fileName, altText, id);
+    }
     return sendJson(res, 200, db.prepare("SELECT * FROM media WHERE id = ?").get(id));
   } catch (error) {
     return sendJson(res, error.status || 500, { error: error.status ? error.message : "Could not update media details." });
+  }
+}
+
+async function handleAiAnalyze(req, res) {
+  try {
+    const session = getSession(req);
+    if (!session) return sendJson(res, 401, { error: "Authentication required." });
+
+    // 5-second per-session cooldown
+    const lastAnalysis = aiAnalysisCooldowns.get(session.key) || 0;
+    const elapsed = Date.now() - lastAnalysis;
+    if (elapsed < 5000) {
+      const wait = Math.ceil((5000 - elapsed) / 1000);
+      return sendJson(res, 429, { error: `Please wait ${wait}s before analyzing again.` });
+    }
+
+    const body = await readJson(req);
+    const mediaId = String(body.mediaId || "").trim();
+    if (!mediaId) return sendJson(res, 400, { error: "mediaId is required." });
+
+    const media = db.prepare("SELECT * FROM media WHERE id = ?").get(mediaId);
+    if (!media) return sendJson(res, 404, { error: "Media item not found." });
+
+    // Resolve image path on disk (never use a URL)
+    let imagePath;
+    const fileUrl = media.file_url;
+    if (fileUrl.startsWith("/uploads/")) {
+      const fileName = fileUrl.slice("/uploads/".length);
+      imagePath = path.join(UPLOAD_DIR, fileName);
+    } else if (fileUrl.startsWith("/assets/")) {
+      const fileName = decodeURIComponent(fileUrl.slice("/assets/".length));
+      imagePath = path.join(ROOT, "assets", fileName);
+    } else {
+      return sendJson(res, 400, { error: "Cannot resolve the image file path." });
+    }
+
+    if (!fs.existsSync(imagePath)) {
+      return sendJson(res, 404, { error: "Image file not found on disk." });
+    }
+
+    aiAnalysisCooldowns.set(session.key, Date.now());
+    const result = await analyzePhoto(imagePath, media.mime_type);
+
+    return sendJson(res, 200, result);
+  } catch (error) {
+    return sendJson(res, error.status || 500, {
+      error: error.status ? error.message : "AI analysis failed unexpectedly.",
+    });
   }
 }
 

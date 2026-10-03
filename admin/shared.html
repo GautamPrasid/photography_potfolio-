@@ -86,6 +86,10 @@
 <template id="photo-dialog-form-template">
   <form class="admin-form" id="photo-form" enctype="multipart/form-data">
     <img class="admin-preview" data-photo-preview alt="" hidden>
+    <div class="ai-toolbar" style="margin-bottom: 1rem;">
+      <button class="admin-button-secondary" type="button" data-action="ai-analyze"><i class="ri-sparkles-line"></i> Auto-fill details with AI</button>
+      <span class="ai-status" data-ai-status style="margin-left: 0.5rem; font-size: 0.875rem; opacity: 0.8;"></span>
+    </div>
     <div class="admin-form-grid">
       <label class="admin-field full" for="photo-file-input">
         Photo

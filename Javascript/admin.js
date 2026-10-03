@@ -394,6 +394,38 @@
       sectionsContainer.append(checkLabel);
     });
 
+    let pendingAiMetadata = null;
+    const aiBtn = form.querySelector('[data-action="ai-analyze"]');
+    const aiStatus = form.querySelector('[data-ai-status]');
+    if (aiBtn) {
+      aiBtn.addEventListener("click", async () => {
+        try {
+          if (!item?.mediaId) {
+            aiStatus.textContent = "AI analysis requires an existing saved photo.";
+            return;
+          }
+          aiBtn.disabled = true;
+          aiStatus.textContent = "Analyzing photo with AI...";
+          const res = await api("/api/admin/ai/analyze-photo", {
+            method: "POST",
+            body: JSON.stringify({ mediaId: item.mediaId }),
+          });
+          if (res.title) form.elements.namedItem("title").value = res.title;
+          if (res.description) form.elements.namedItem("description").value = res.description;
+          if (res.category) form.elements.namedItem("category").value = res.category;
+          if (res.location) form.elements.namedItem("location").value = res.location;
+          if (res.photoDate) form.elements.namedItem("photoDate").value = res.photoDate;
+          if (Array.isArray(res.tags)) form.elements.namedItem("tags").value = res.tags.join(", ");
+          pendingAiMetadata = JSON.stringify(res);
+          aiStatus.textContent = "AI analysis complete! Review fields below and save.";
+        } catch (err) {
+          aiStatus.textContent = err.message || "AI analysis failed.";
+        } finally {
+          aiBtn.disabled = false;
+        }
+      });
+    }
+
     if (item) {
       preview.hidden = false;
       preview.src = item.imageUrl;
@@ -421,6 +453,9 @@
       const data = new FormData();
       for (const key of ["title", "category", "location", "photoDate", "tags", "displayOrder", "description"]) {
         data.set(key, formValue(dialogForm, key));
+      }
+      if (pendingAiMetadata) {
+        data.set("aiMetadata", pendingAiMetadata);
       }
       for (const section of selectedChecks(dialogForm, "sections")) {
         data.append("sections", section);
