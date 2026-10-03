@@ -606,9 +606,6 @@
     layout("content", view, "Website content");
   }
 
-    layout("content", view, "Website Content");
-  }
-
   function renderSkills(skills, view) {
     const rows = view.querySelector("#skill-rows");
     skills.forEach((skill) => {
