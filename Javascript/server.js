@@ -130,6 +130,14 @@ db.exec(`
     is_visible INTEGER NOT NULL DEFAULT 1,
     display_order INTEGER NOT NULL DEFAULT 0
   );
+  CREATE TABLE IF NOT EXISTS skills (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    percent INTEGER NOT NULL DEFAULT 80,
+    icon TEXT NOT NULL DEFAULT 'ri-star-line',
+    display_order INTEGER NOT NULL DEFAULT 0,
+    is_visible INTEGER NOT NULL DEFAULT 1
+  );
   CREATE INDEX IF NOT EXISTS portfolio_published_order
     ON portfolio_items (is_published, display_order);
   CREATE INDEX IF NOT EXISTS portfolio_sections_section
@@ -146,6 +154,29 @@ if (!portfolioColumns.some((column) => column.name === "is_hidden")) {
 const mediaColumns = db.prepare("PRAGMA table_info(media)").all();
 if (!mediaColumns.some((column) => column.name === "ai_metadata")) {
   db.exec("ALTER TABLE media ADD COLUMN ai_metadata TEXT");
+}
+
+// Guard: seed skills table the first time (or if it was just created empty)
+const skillsCount = db.prepare("SELECT COUNT(*) AS count FROM skills").get();
+if (skillsCount.count === 0) {
+  db.exec("BEGIN");
+  try {
+    const insertSkill = db.prepare(
+      "INSERT INTO skills (id, name, percent, icon, display_order, is_visible) VALUES (?, ?, ?, ?, ?, 1)",
+    );
+    [
+      ["skill-photography",  "Photography",    95, "ri-camera-line",     0],
+      ["skill-editing",      "Photo Editing",   90, "ri-edit-line",       1],
+      ["skill-lightroom",    "Lightroom",       85, "ri-contrast-line",   2],
+      ["skill-photoshop",    "Photoshop",       80, "ri-image-edit-line", 3],
+      ["skill-video",        "Video Editing",   75, "ri-video-line",      4],
+      ["skill-design",       "Creative Design", 88, "ri-palette-line",    5],
+    ].forEach((row) => insertSkill.run(...row));
+    db.exec("COMMIT");
+  } catch (seedError) {
+    db.exec("ROLLBACK");
+    throw seedError;
+  }
 }
 
 const seedTransaction = db.prepare("SELECT COUNT(*) AS count FROM sections").get();
@@ -470,6 +501,20 @@ function getContent() {
   );
 }
 
+function getSkills({ visibleOnly = false } = {}) {
+  const where = visibleOnly ? "WHERE is_visible = 1" : "";
+  return db.prepare(`SELECT * FROM skills ${where} ORDER BY display_order, name`)
+    .all()
+    .map((row) => ({
+      id: row.id,
+      name: row.name,
+      percent: row.percent,
+      icon: row.icon,
+      displayOrder: row.display_order,
+      visible: Boolean(row.is_visible),
+    }));
+}
+
 function getSession(req) {
   const cookie = req.headers.cookie || "";
   const token = cookie.match(new RegExp(`(?:^|;\\s*)${SESSION_COOKIE}=([^;]+)`))?.[1];
@@ -706,7 +751,62 @@ function handleAdminApi(req, res, url) {
     return handleAiAnalyze(req, res);
   }
 
+  // ── Skills CRUD ──────────────────────────────────────────────────────────
+  if (pathname === "/api/admin/skills" && req.method === "GET") {
+    return sendJson(res, 200, getSkills());
+  }
+  if (pathname === "/api/admin/skills" && req.method === "POST") {
+    return handleSkillWrite(req, res, null);
+  }
+  const skillMatch = pathname.match(/^\/api\/admin\/skills\/([a-z0-9-]+)$/i);
+  if (skillMatch && req.method === "PUT")    return handleSkillWrite(req, res, skillMatch[1]);
+  if (skillMatch && req.method === "DELETE") {
+    const deleted = db.prepare("DELETE FROM skills WHERE id = ?").run(skillMatch[1]);
+    if (deleted.changes === 0) return sendJson(res, 404, { error: "Skill not found." });
+    return sendJson(res, 200, { deleted: true });
+  }
+
   return sendJson(res, 404, { error: "Admin API route not found." });
+}
+
+async function handleSkillWrite(req, res, id) {
+  try {
+    const body = await readJson(req);
+    const name = String(body.name || "").trim();
+    if (!name || name.length > 60) {
+      return sendJson(res, 400, { error: "Skill name must be 1-60 characters." });
+    }
+    const rawPercent = body.percent ?? 80;
+    // Reject non-integer numbers (80.5) and non-numeric strings ("abc")
+    if (typeof rawPercent === "number" && !Number.isInteger(rawPercent)) {
+      return sendJson(res, 400, { error: "Percent must be an integer from 0 to 100." });
+    }
+    const percentStr = String(rawPercent).trim();
+    const percent = Number(percentStr);
+    if (!Number.isInteger(percent) || isNaN(percent) || percent < 0 || percent > 100) {
+      return sendJson(res, 400, { error: "Percent must be an integer from 0 to 100." });
+    }
+    const icon = String(body.icon || "ri-star-line").trim();
+    if (!/^ri-[a-z0-9-]+$/.test(icon)) {
+      return sendJson(res, 400, { error: "Icon must match the pattern ri-<name> (e.g. ri-camera-line)." });
+    }
+    const displayOrder = parseInt(body.displayOrder ?? 0, 10);
+    const isVisible = body.visible === true || body.visible === 1 || body.visible === "true" ? 1 : 0;
+
+    if (id) {
+      const existing = db.prepare("SELECT id FROM skills WHERE id = ?").get(id);
+      if (!existing) return sendJson(res, 404, { error: "Skill not found." });
+      db.prepare("UPDATE skills SET name=?, percent=?, icon=?, display_order=?, is_visible=? WHERE id=?")
+        .run(name, percent, icon, displayOrder, isVisible, id);
+    } else {
+      const newId = crypto.randomUUID();
+      db.prepare("INSERT INTO skills (id, name, percent, icon, display_order, is_visible) VALUES (?,?,?,?,?,?)")
+        .run(newId, name, percent, icon, displayOrder, isVisible);
+    }
+    return sendJson(res, 200, getSkills());
+  } catch (error) {
+    return sendJson(res, error.status || 500, { error: error.status ? error.message : "Could not save skill." });
+  }
 }
 
 async function handlePortfolioWrite(req, res, id) {
@@ -1124,12 +1224,13 @@ async function handleMediaReplace(req, res, id) {
 
 function serveStatic(req, res, url) {
   const pathname = decodeURIComponent(url.pathname);
+  const cleanPath = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
   const adminRoutes = new Set([
-    "/admin", "/admin/", "/admin/login", "/admin/dashboard", "/admin/portfolio",
+    "/admin", "/admin/login", "/admin/dashboard", "/admin/portfolio",
     "/admin/gallery", "/admin/sections", "/admin/content", "/admin/social",
     "/admin/navigation", "/admin/media", "/admin/settings",
   ]);
-  if (adminRoutes.has(pathname)) {
+  if (adminRoutes.has(cleanPath)) {
     const file = fs.readFileSync(path.join(ROOT, "admin", "admin.html"));
     res.writeHead(200, {
       "Content-Type": "text/html; charset=utf-8",
@@ -1190,6 +1291,7 @@ async function requestHandler(req, res) {
       sections,
       photos,
       socialLinks,
+      skills: getSkills({ visibleOnly: true }),
     });
   }
   if (url.pathname.startsWith("/api/") && req.method !== "GET" && !checkOrigin(req, res)) return;

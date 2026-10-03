@@ -1,7 +1,7 @@
 <template id="admin-layout-template">
   <div class="admin-layout">
     <aside class="admin-sidebar">
-      <a class="admin-brand" href="/admin/dashboard">
+      <a class="admin-brand" href="/admin/dashboard" data-route="dashboard">
         <img src="/assets/logo.png" alt="Dear Praa">
         <span>Portfolio Admin</span>
       </a>
@@ -323,6 +323,34 @@
     <div class="admin-dialog-actions">
       <button class="admin-button-secondary" type="button" data-close-dialog>Cancel</button>
       <button class="admin-button" type="submit">Replace image</button>
+    </div>
+  </form>
+</template>
+
+<template id="skill-dialog-form-template">
+  <form class="admin-form">
+    <div class="admin-form-grid">
+      <label class="admin-field" for="skill-name-input">
+        Name (1–60 chars)
+        <input id="skill-name-input" type="text" name="name" required maxlength="60">
+      </label>
+      <label class="admin-field" for="skill-percent-input">
+        Percent (0–100)
+        <input id="skill-percent-input" type="number" name="percent" min="0" max="100" step="1" value="80" required>
+      </label>
+      <label class="admin-field" for="skill-icon-input">
+        Icon class (e.g. ri-camera-line)
+        <input id="skill-icon-input" type="text" name="icon" value="ri-star-line" required>
+      </label>
+      <label class="admin-field" for="skill-order-input">
+        Display order
+        <input id="skill-order-input" type="number" name="displayOrder" value="0">
+      </label>
+    </div>
+    <label class="admin-check"><input type="checkbox" name="visible" value="true" checked><span>Visible</span></label>
+    <div class="admin-dialog-actions">
+      <button class="admin-button-secondary" type="button" data-close-dialog>Cancel</button>
+      <button class="admin-button" type="submit" data-submit-label>Add skill</button>
     </div>
   </form>
 </template>

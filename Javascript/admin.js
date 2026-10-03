@@ -644,14 +644,25 @@
   }
 
   async function contentPage() {
-    const content = await api("/api/admin/content");
+    const [content, skills] = await Promise.all([
+      api("/api/admin/content"),
+      api("/api/admin/skills"),
+    ]);
     const view = template("content-view-template");
-    const form = view.querySelector("#content-form");
+    const form = view.matches("#content-form") ? view : view.querySelector("#content-form");
+    if (!form) {
+      const notice = document.createElement("div");
+      notice.className = "admin-notice error";
+      notice.textContent = "Content form element is missing from the template.";
+      return layout("content", notice, "Website content");
+    }
 
     for (const [key, value] of Object.entries(content)) {
       const field = form.elements.namedItem(key);
       if (field) field.value = value;
     }
+
+    renderSkills(skills, view);
 
     layout("content", view, "Website content");
 
@@ -667,6 +678,61 @@
       } catch (error) {
         message(error.message, true);
       }
+    });
+  }
+
+  function renderSkills(skills, view) {
+    const rows = view.querySelector("#skill-rows");
+    if (!rows) return;
+    rows.replaceChildren();
+    skills.forEach((skill) => {
+      const row = template("skill-row-template");
+      setActionId(row, skill.id);
+      const iconEl = row.querySelector("[data-skill-icon]");
+      iconEl.className = skill.icon;
+      row.querySelector("[data-skill-name]").textContent = skill.name;
+      row.querySelector("[data-skill-percent]").textContent = `${skill.percent}%`;
+      row.querySelector("[data-skill-visibility]").replaceChildren(pill(skill.visible, "Visible", "Hidden"));
+      row.querySelector("[data-skill-order]").textContent = skill.displayOrder;
+      row.querySelector('[data-action="toggle-skill"]').textContent = skill.visible ? "Hide" : "Show";
+      rows.append(row);
+    });
+    if (!skills.length) {
+      const empty = document.createElement("tr");
+      const cell = document.createElement("td");
+      cell.colSpan = 7;
+      cell.className = "admin-empty";
+      cell.textContent = "No skills found. Use \"+ Add Skill\" above to create one.";
+      empty.append(cell);
+      rows.append(empty);
+    }
+    setupDragSort(rows, "/api/admin/skills", skills);
+  }
+
+  async function skillDialog(skill = null) {
+    const form = template("skill-dialog-form-template");
+    if (skill) {
+      form.elements.namedItem("name").value = skill.name || "";
+      form.elements.namedItem("percent").value = skill.percent ?? 80;
+      form.elements.namedItem("icon").value = skill.icon || "ri-star-line";
+      form.elements.namedItem("displayOrder").value = skill.displayOrder ?? 0;
+      form.elements.namedItem("visible").checked = Boolean(skill.visible);
+      form.querySelector("[data-submit-label]").textContent = "Save skill";
+    }
+    showDialog(skill ? "Edit skill" : "Add skill", form, async (dialogForm) => {
+      const payload = {
+        name: formValue(dialogForm, "name"),
+        percent: parseInt(formValue(dialogForm, "percent"), 10),
+        icon: formValue(dialogForm, "icon"),
+        displayOrder: parseInt(formValue(dialogForm, "displayOrder") || "0", 10),
+        visible: dialogForm.elements.namedItem("visible").checked,
+      };
+      await api(skill ? `/api/admin/skills/${encodeURIComponent(skill.id)}` : "/api/admin/skills", {
+        method: skill ? "PUT" : "POST",
+        body: JSON.stringify(payload),
+      });
+      message(skill ? "Skill updated." : "Skill added.");
+      await render();
     });
   }
 
@@ -972,6 +1038,28 @@
           id,
           `Delete navigation item "${item.label}"?`,
           "Navigation item deleted.",
+        );
+      } else if (actionName === "add-skill") {
+        await skillDialog();
+      } else if (actionName === "edit-skill") {
+        const skill = (await api("/api/admin/skills")).find((s) => s.id === id);
+        if (skill) await skillDialog(skill);
+      } else if (actionName === "toggle-skill") {
+        const skill = (await api("/api/admin/skills")).find((s) => s.id === id);
+        if (!skill) throw new Error("Skill not found.");
+        await api(`/api/admin/skills/${encodeURIComponent(id)}`, {
+          method: "PUT",
+          body: JSON.stringify({ ...skill, visible: !skill.visible }),
+        });
+        message("Skill visibility updated.");
+        await render();
+      } else if (actionName === "delete-skill") {
+        const skill = (await api("/api/admin/skills")).find((s) => s.id === id);
+        await deleteRecord(
+          "/api/admin/skills",
+          id,
+          `Delete skill "${skill ? skill.name : id}"?`,
+          "Skill deleted.",
         );
       } else if (actionName === "view-usage") {
         const media = (await api("/api/admin/media")).find((entry) => entry.id === id);
