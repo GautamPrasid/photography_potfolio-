@@ -481,11 +481,36 @@ function requireAdmin(req, res) {
   return true;
 }
 
+function isSecureRequest(req) {
+  if (IS_VERCEL) {
+    return req.headers["x-forwarded-proto"]?.split(",")[0].trim() === "https";
+  }
+  return Boolean(req.socket.encrypted);
+}
+
 function checkOrigin(req, res) {
   const origin = req.headers.origin;
   if (origin) {
-    const expected = `${req.socket.encrypted ? "https" : "http"}://${req.headers.host}`;
-    if (origin !== expected) {
+    const forwardedProto = IS_VERCEL && req.headers["x-forwarded-proto"]
+      ? req.headers["x-forwarded-proto"].split(",")[0].trim()
+      : "";
+    const forwardedHost = IS_VERCEL && req.headers["x-forwarded-host"]
+      ? req.headers["x-forwarded-host"].split(",")[0].trim()
+      : "";
+    const scheme = forwardedProto || (isSecureRequest(req) ? "https" : "http");
+    const host = forwardedHost || req.headers.host;
+    let matchesOrigin = false;
+    try {
+      const parsedOrigin = new URL(origin);
+      const expectedOrigin = new URL(`${scheme}://${host}`);
+      matchesOrigin = parsedOrigin.origin === expectedOrigin.origin
+        && parsedOrigin.pathname === "/"
+        && !parsedOrigin.search
+        && !parsedOrigin.hash;
+    } catch {
+      matchesOrigin = false;
+    }
+    if (!matchesOrigin) {
       sendJson(res, 403, { error: "Cross-origin write requests are not allowed." });
       return false;
     }
@@ -584,7 +609,7 @@ function handleAdminApi(req, res, url) {
       const key = crypto.createHash("sha256").update(token).digest("hex");
       sessions.set(key, { username, expiresAt: Date.now() + SESSION_TTL });
       return sendJson(res, 200, { authenticated: true, username }, {
-        "Set-Cookie": `${SESSION_COOKIE}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL / 1000}${req.socket.encrypted ? "; Secure" : ""}`,
+        "Set-Cookie": `${SESSION_COOKIE}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL / 1000}${isSecureRequest(req) ? "; Secure" : ""}`,
       });
     }).catch((error) => sendJson(res, error.status || 400, { error: error.message }));
   }
@@ -592,7 +617,7 @@ function handleAdminApi(req, res, url) {
     const session = getSession(req);
     if (session) sessions.delete(session.key);
     return sendJson(res, 200, { authenticated: false }, {
-      "Set-Cookie": `${SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${req.socket.encrypted ? "; Secure" : ""}`,
+      "Set-Cookie": `${SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${isSecureRequest(req) ? "; Secure" : ""}`,
     });
   }
   if (!pathname.startsWith("/api/admin/")) return null;

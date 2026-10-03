@@ -1,115 +1,36 @@
-<<<<<<< HEAD
 # Dear Praa Photography CMS
 
-This is a self-hosted site. The static HTML pages alone do not provide a secure admin login or persistent uploads; start the Node.js server for public data and `/admin` routes.
+The public pages use CMS data from `/api/public/site`. Run the Node.js server locally or deploy the project to Vercel; opening the HTML files directly or serving them as a static-only site will not load this data or the admin API.
 
 ## Requirements
 
 - Node.js 22.13 or newer
 - No npm package installation is required. The server uses Node's built-in SQLite support.
 
-## Start locally
+## Run locally
 
 1. Copy `.env.example` to `.env`.
-2. Set a unique `ADMIN_PASSWORD` of at least 12 characters and choose an `ADMIN_USERNAME`.
+2. Set a unique `ADMIN_USERNAME` and an `ADMIN_PASSWORD` of at least 12 characters.
 3. Run `npm start`.
-4. Open `http://localhost:3000/` for the site or `http://localhost:3000/admin` to sign in.
+4. Open `http://localhost:3000/` for the site or `http://localhost:3000/admin` for the CMS.
 
-The SQLite database is created at `data/portfolio.sqlite`; uploaded images are stored in `uploads/`. Both paths are ignored by Git. Back up both directories together. Keep the server behind HTTPS when it is reachable beyond localhost. The first database initialization imports the portfolio images and links already present in `assets/`; it does not create demo photos.
+Do not open `home.html` with VS Code Live Server (usually port `5500`). Live Server only serves static files and does not provide `/api/public/site`, so the page's CMS content will be missing. Use the Node.js server above and open `http://localhost:3000/home.html` instead.
 
-Changing the admin credentials requires updating `.env` and restarting the server. Admin sessions are in-memory and expire after eight hours.
+The local SQLite database is stored in `data/portfolio.sqlite`, and uploaded images are stored in `uploads/`. Back up both directories together. The first database initialization imports the portfolio images already present in `assets/`.
 
-## Admin page structure
+## Deploy to Vercel
 
-All `/admin/...` routes use the single complete document `admin/admin.html`, which loads the shared layout and templates from `admin/shared.html`. Route-specific markup is kept in the matching `admin/*.html` template file, and `Javascript/admin.js` loads the page template and handles database data and interactions. Gallery reuses the Portfolio view instead of keeping a second copy of its table markup. The shared admin document uses `css/master.css` plus the admin-specific stylesheet.
+Import this repository into Vercel with the repository root as the project root. Vercel uses `vercel.json` to route public paths and the `/api/*` requests to the serverless handler. The function explicitly includes the seed images from `assets/`, which it needs when initializing its database.
 
-Public pages share their visual system in `css/master.css`; `Javascript/public-cms.js` owns CMS data rendering, mobile navigation, and header scroll state. Page scripts contain only page-specific behavior. The About-page contact form opens a prefilled email in the visitor's configured mail application; it does not send messages through the server.
-=======
-# 📸 Photography Portfolio
+Set `ADMIN_USERNAME` and a unique `ADMIN_PASSWORD` (at least 12 characters) in the Vercel project's environment variables, then deploy. After deployment, check that `https://<your-vercel-domain>/api/public/site` returns JSON containing `content`, `navigation`, and `photos`. The existing Netlify deployment does not run this API, so it will continue to show missing CMS content until the site is deployed to Vercel and visitors use the Vercel domain.
 
-## 📌 Project Overview
+Vercel function storage under `/tmp` is temporary. The seeded public portfolio can be displayed, but CMS database edits and uploaded files are not durable across function restarts; use a persistent database and object storage before relying on admin changes in production.
 
-This is a **personal photography portfolio website** created to showcase my photography work and visual storytelling. The website highlights selected photographs with a clean, minimal, and aesthetic design, focusing on emotion, composition, and creativity.
+## Project structure
 
-🌐 **Live Website:** [https://dearpraa.netlify.app/home](https://dearpraa.netlify.app/home)
-
----
-
-## 🎨 Features
-
-* Clean and minimal portfolio layout
-* Responsive design for desktop and mobile devices
-* Gallery-style photo showcase
-* Smooth navigation and modern UI
-* Optimized for fast loading and performance
-
----
-
-## 🛠️ Tech Stack
-
-* **HTML5** – Structure of the website
-* **CSS3** – Styling and layout
-* **JavaScript** – Interactivity and dynamic behavior
-* **Hosting:** Netlify
-
----
-
-## 📂 Project Structure
-
-```
-photography_portfolio/
-│── index.html
-│── css/
-│   └── style.css
-│── js/
-│   └── script.js
-│── images/
-│   └── gallery images
-```
-
----
-
-## 🚀 How to Run Locally
-
-```bash
-# Clone the repository
-git clone <your-repo-link>
-cd photography_portfolio
-
-# Open index.html in browser
-```
-
----
-
-## 📚 Purpose & Learning Outcomes
-
-* Practiced front-end web development fundamentals
-* Improved UI/UX design sense
-* Learned responsive layout techniques
-* Showcased photography work professionally
-* Deployed a live website using Netlify
-
----
-
-## ✨ Future Improvements
-
-* Add lightbox view for images
-* Category-based filtering
-* Contact form integration
-* CMS or backend support
-* SEO optimization
-
----
-
-## 👨‍💻 Author
-
-**Prasid Gautam**
-Photography & Web Enthusiast
-Aspiring Front-End Developer
-
----
-
-## 📄 License
-
-This project is intended for **personal and portfolio use**. All photographs are original and protected by co
->>>>>>> c95eef9e0ff499bcb9872655b387f33458553bc9
+- `home.html`, `about.html`, `photography.html`, and `hire.html` are the public pages.
+- `Javascript/public-cms.js` loads and renders CMS data on public pages.
+- `Javascript/server.js` implements the API and local Node.js server.
+- `api/index.js` is the Vercel serverless entry point.
+- `admin/admin.html` and `admin/*.html` provide the admin shell and page templates.
+- `css/master.css` contains the public site styles.
