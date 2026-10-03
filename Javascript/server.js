@@ -62,7 +62,8 @@ const SESSION_SECRET = process.env.SESSION_SECRET || "dev-insecure-session-secre
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
-// Vercel instances start with an empty database unless DB_PATH points to a persistent database.\nconst db = new DatabaseSync(DB_PATH);
+// Vercel instances start with an empty database unless DB_PATH points to a persistent database.
+const db = new DatabaseSync(DB_PATH);
 db.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
 
 db.exec(`
