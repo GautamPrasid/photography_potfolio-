@@ -2,7 +2,7 @@
   const app = document.getElementById("admin-app");
   const templateBin = document.getElementById("admin-template-bin");
   const routes = new Set([
-    "dashboard", "portfolio", "gallery", "sections", "content",
+    "dashboard", "portfolio", "content", "skills",
     "social", "navigation", "media", "settings",
   ]);
   const socialLocations = [
@@ -170,7 +170,26 @@
     });
     const form = backdrop.querySelector("form");
     if (form && onSubmit) {
-      form.addEventListener("submit", async (event) => {
+      view.querySelectorAll("[data-content-save]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const prefix = button.dataset.contentSave;
+        const payload = {};
+        for (const element of form.elements) {
+          if (element.name && element.name.startsWith(prefix + ".")) payload[element.name] = element.value.trim();
+        }
+        try {
+          button.disabled = true;
+          await api("/api/admin/content", { method: "PUT", body: JSON.stringify(payload) });
+          message(prefix.charAt(0).toUpperCase() + prefix.slice(1) + " website content saved.");
+        } catch (error) {
+          message(error.message, true);
+        } finally {
+          button.disabled = false;
+        }
+      });
+    });
+
+    form.addEventListener("submit", async (event) => {
         event.preventDefault();
         const submit = form.querySelector('[type="submit"]');
         submit.disabled = true;
@@ -272,7 +291,7 @@
     const tiles = [
       ["Total Photos", stats.totalPhotos], ["Published Photos", stats.publishedPhotos],
       ["Draft Photos", stats.draftPhotos], ["Featured Photos", stats.featuredPhotos],
-      ["Portfolio Sections", stats.sections], ["Social Links", stats.socialLinks],
+      ["Skills & Expertise", stats.skills ?? 0], ["Social Links", stats.socialLinks],
       ["Navigation Items", stats.navigationItems],
     ];
     const view = template("dashboard-view-template");
@@ -286,14 +305,16 @@
     layout("dashboard", view, "Dashboard");
   }
 
-  async function portfolioPage(galleryOnly = false) {
-    const [items, sections] = await Promise.all([
-      api("/api/admin/portfolio"),
-      api("/api/admin/sections"),
-    ]);
-    const filteredItems = galleryOnly ? items.filter((item) => item.sections.includes("gallery")) : items;
-    const categories = sections.filter((section) => !section.system);
-    const view = template(galleryOnly ? "gallery-view-template" : "portfolio-view-template");
+  async function portfolioPage() {
+    const items = await api("/api/admin/portfolio");
+    const filteredItems = items;
+    const categories = [
+      { slug: "nature", title: "Nature" }, { slug: "portrait", title: "Portrait" },
+      { slug: "street", title: "Street" }, { slug: "landscape", title: "Landscape" },
+      { slug: "urban", title: "Urban" }, { slug: "travel", title: "Travel" },
+      { slug: "monochrome", title: "Monochrome" }, { slug: "architecture", title: "Architecture" },
+    ];
+    const view = template("portfolio-view-template");
     const rows = view.querySelector("#photo-rows");
 
     filteredItems.forEach((item) => {
@@ -305,7 +326,6 @@
       row.querySelector("[data-photo-title]").textContent = item.title;
       row.querySelector("[data-photo-file]").textContent = item.fileName;
       row.querySelector("[data-photo-category]").textContent = item.category || "—";
-      row.querySelector("[data-photo-sections]").textContent = item.sections.join(", ") || "—";
       row.querySelector("[data-photo-status]").replaceChildren(
         item.hidden ? pill(false, "Published", "Hidden") : pill(item.published),
       );
@@ -328,21 +348,19 @@
     if (!filteredItems.length) {
       const emptyRow = document.createElement("tr");
       const cell = document.createElement("td");
-      cell.colSpan = 9;
+      cell.colSpan = 8;
       cell.className = "admin-empty";
-      cell.textContent = galleryOnly ? "No gallery photos yet." : "No portfolio items yet. Add your first photo to get started.";
+      cell.textContent = "No portfolio items yet. Add your first photo to get started.";
       emptyRow.append(cell);
       rows.append(emptyRow);
     }
 
     addOptions(view.querySelector("#photo-category"), "All categories", categories);
-    const sectionFilter = view.querySelector("#photo-section");
-    if (sectionFilter) addOptions(sectionFilter, "All sections", sections);
 
-    layout(galleryOnly ? "gallery" : "portfolio", view, galleryOnly ? "Gallery" : "Portfolio");
+    layout("portfolio", view, "Portfolio");
 
     document.getElementById("photo-search").addEventListener("input", filterPhotoRows);
-    ["photo-category", "photo-section", "photo-status", "photo-featured"].forEach((id) => {
+    ["photo-category", "photo-status", "photo-featured"].forEach((id) => {
       const el = document.getElementById(id);
       if (el) el.addEventListener("change", filterPhotoRows);
     });
@@ -352,7 +370,6 @@
   function filterPhotoRows() {
     const search = document.getElementById("photo-search")?.value.toLowerCase() || "";
     const category = document.getElementById("photo-category")?.value || "";
-    const section = document.getElementById("photo-section")?.value || "";
     const status = document.getElementById("photo-status")?.value || "";
     const featured = document.getElementById("photo-featured")?.value || "";
 
@@ -364,7 +381,6 @@
       const isFeatured = cells[6].textContent.includes("Featured");
       row.hidden = (search && !text.includes(search))
         || (category && !cells[3].textContent.toLowerCase().includes(category))
-        || (section && !cells[4].textContent.toLowerCase().includes(section))
         || (status === "published" && !isPublished)
         || (status === "draft" && isPublished)
         || (status === "hidden" && !isHidden)
@@ -374,8 +390,12 @@
   }
 
   async function photoDialog(item = null) {
-    const sections = await api("/api/admin/sections");
-    const categories = sections.filter((section) => !section.system);
+    const categories = [
+      { slug: "nature", title: "Nature" }, { slug: "portrait", title: "Portrait" },
+      { slug: "street", title: "Street" }, { slug: "landscape", title: "Landscape" },
+      { slug: "urban", title: "Urban" }, { slug: "travel", title: "Travel" },
+      { slug: "monochrome", title: "Monochrome" }, { slug: "architecture", title: "Architecture" },
+    ];
     const form = template("photo-dialog-form-template");
     const preview = form.querySelector("[data-photo-preview]");
     const photoInput = form.querySelector('input[name="photo"]');
@@ -385,22 +405,6 @@
       "No category",
       categories.map((s) => ({ slug: s.slug, title: s.title })),
     );
-
-    const sectionsContainer = form.querySelector("[data-photo-sections]");
-    sectionsContainer.replaceChildren();
-    sections.forEach((section) => {
-      const checkLabel = document.createElement("label");
-      checkLabel.className = "admin-check";
-      const input = document.createElement("input");
-      input.type = "checkbox";
-      input.name = "sections";
-      input.value = section.slug;
-      if (item?.sections.includes(section.slug)) input.checked = true;
-      const span = document.createElement("span");
-      span.textContent = `${section.title}${section.visible ? "" : " (hidden)"}`;
-      checkLabel.append(input, span);
-      sectionsContainer.append(checkLabel);
-    });
 
     const openAiBtn = form.querySelector('[data-action="open-ai-dialog"]');
     const aiBadge = form.querySelector('[data-photo-ai-badge]');
@@ -452,9 +456,6 @@
         if (dialogForm.elements.namedItem(key)) {
           data.set(key, formValue(dialogForm, key));
         }
-      }
-      for (const section of selectedChecks(dialogForm, "sections")) {
-        data.append("sections", section);
       }
       data.set("featured", dialogForm.elements.namedItem("featured").checked ? "true" : "false");
       data.set("published", dialogForm.elements.namedItem("published").checked ? "true" : "false");
@@ -550,7 +551,6 @@
       data.set("featured", item.featured ? "true" : "false");
       data.set("published", item.published ? "true" : "false");
       data.set("hidden", item.hidden ? "true" : "false");
-      (item.sections || []).forEach((sec) => data.append("sections", sec));
 
       const aiMetadataObj = {
         subject: formValue(dialogForm, "subject"),
@@ -572,168 +572,11 @@
     });
   }
 
-  async function sectionPage() {
-    const sections = await api("/api/admin/sections");
-    const view = template("sections-view-template");
-    const rows = view.querySelector("#section-rows");
-
-    sections.forEach((section) => {
-      const row = template("section-row-template");
-      setActionId(row, section.id);
-      row.querySelector("[data-section-title]").textContent = section.title;
-      row.querySelector("[data-section-name]").textContent = section.name;
-      row.querySelector("[data-section-slug]").textContent = section.slug;
-      row.querySelector("[data-section-visibility]").replaceChildren(pill(section.visible, "Visible", "Hidden"));
-      row.querySelector("[data-section-order]").textContent = section.display_order;
-      const actions = row.querySelector(".admin-actions");
-      if (section.system) {
-        actions.textContent = "Built-in display location";
-      } else {
-        actions.querySelector('[data-action="toggle-section"]').textContent = section.visible ? "Hide" : "Show";
-      }
-      rows.append(row);
-    });
-
-    if (!sections.length) {
-      const emptyRow = document.createElement("tr");
-      const cell = document.createElement("td");
-      cell.colSpan = 7;
-      cell.className = "admin-empty";
-      cell.textContent = "No sections found.";
-      emptyRow.append(cell);
-      rows.append(emptyRow);
-    }
-
-    layout("sections", view, "Sections");
-    document.getElementById("section-search").addEventListener("input", (event) => {
-      const q = event.target.value.toLowerCase();
-      document.querySelectorAll("#section-rows tr[data-id]").forEach((row) => {
-        row.hidden = !row.textContent.toLowerCase().includes(q);
-      });
-    });
-    setupDragSort(document.getElementById("section-rows"), "/api/admin/sections", sections);
-  }
-
-  async function sectionDialog(section = null) {
-    const form = template("section-dialog-form-template");
-    if (section) {
-      form.elements.namedItem("name").value = section.name || "";
-      form.elements.namedItem("title").value = section.title || "";
-      form.elements.namedItem("slug").value = section.slug || "";
-      form.elements.namedItem("displayOrder").value = section.display_order ?? 0;
-      form.elements.namedItem("description").value = section.description || "";
-      form.elements.namedItem("visible").checked = Boolean(section.visible);
-      form.querySelector("[data-submit-label]").textContent = "Save section";
-    }
-
-    showDialog(section ? "Edit section" : "Create section", form, async (dialogForm) => {
-      const payload = {
-        name: formValue(dialogForm, "name"),
-        title: formValue(dialogForm, "title"),
-        slug: formValue(dialogForm, "slug"),
-        displayOrder: formValue(dialogForm, "displayOrder"),
-        description: formValue(dialogForm, "description"),
-        visible: dialogForm.elements.namedItem("visible").checked,
-      };
-      await api(section ? `/api/admin/sections/${encodeURIComponent(section.id)}` : "/api/admin/sections", {
-        method: section ? "PUT" : "POST", body: JSON.stringify(payload),
-      });
-      message(section ? "Section updated." : "Section created.");
-      await render();
-    });
-  }
-
-  async function contentPage() {
-    const [content, skills] = await Promise.all([
-      api("/api/admin/content"),
-      api("/api/admin/skills"),
-    ]);
-    const view = template("content-view-template");
-    const form = view.matches("#content-form") ? view : view.querySelector("#content-form");
-    if (!form) {
-      const notice = document.createElement("div");
-      notice.className = "admin-notice error";
-      notice.textContent = "Content form element is missing from the template.";
-      return layout("content", notice, "Website content");
-    }
-
-    for (const [key, value] of Object.entries(content)) {
-      const field = form.elements.namedItem(key);
-      if (field) field.value = value;
-    }
-
+  async function skillsPage() {
+    const skills = await api("/api/admin/skills");
+    const view = template("skills-view-template");
     renderSkills(skills, view);
-
-    layout("content", view, "Website content");
-
-    form.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      const payload = {};
-      for (const element of form.elements) {
-        if (element.name) payload[element.name] = element.value.trim();
-      }
-      try {
-        await api("/api/admin/content", { method: "PUT", body: JSON.stringify(payload) });
-        message("Website content saved.");
-      } catch (error) {
-        message(error.message, true);
-      }
-    });
-  }
-
-  function renderSkills(skills, view) {
-    const rows = view.querySelector("#skill-rows");
-    if (!rows) return;
-    rows.replaceChildren();
-    skills.forEach((skill) => {
-      const row = template("skill-row-template");
-      setActionId(row, skill.id);
-      const iconEl = row.querySelector("[data-skill-icon]");
-      iconEl.className = skill.icon;
-      row.querySelector("[data-skill-name]").textContent = skill.name;
-      row.querySelector("[data-skill-percent]").textContent = `${skill.percent}%`;
-      row.querySelector("[data-skill-visibility]").replaceChildren(pill(skill.visible, "Visible", "Hidden"));
-      row.querySelector("[data-skill-order]").textContent = skill.displayOrder;
-      row.querySelector('[data-action="toggle-skill"]').textContent = skill.visible ? "Hide" : "Show";
-      rows.append(row);
-    });
-    if (!skills.length) {
-      const empty = document.createElement("tr");
-      const cell = document.createElement("td");
-      cell.colSpan = 7;
-      cell.className = "admin-empty";
-      cell.textContent = "No skills found. Use \"+ Add Skill\" above to create one.";
-      empty.append(cell);
-      rows.append(empty);
-    }
-    setupDragSort(rows, "/api/admin/skills", skills);
-  }
-
-  async function skillDialog(skill = null) {
-    const form = template("skill-dialog-form-template");
-    if (skill) {
-      form.elements.namedItem("name").value = skill.name || "";
-      form.elements.namedItem("percent").value = skill.percent ?? 80;
-      form.elements.namedItem("icon").value = skill.icon || "ri-star-line";
-      form.elements.namedItem("displayOrder").value = skill.displayOrder ?? 0;
-      form.elements.namedItem("visible").checked = Boolean(skill.visible);
-      form.querySelector("[data-submit-label]").textContent = "Save skill";
-    }
-    showDialog(skill ? "Edit skill" : "Add skill", form, async (dialogForm) => {
-      const payload = {
-        name: formValue(dialogForm, "name"),
-        percent: parseInt(formValue(dialogForm, "percent"), 10),
-        icon: formValue(dialogForm, "icon"),
-        displayOrder: parseInt(formValue(dialogForm, "displayOrder") || "0", 10),
-        visible: dialogForm.elements.namedItem("visible").checked,
-      };
-      await api(skill ? `/api/admin/skills/${encodeURIComponent(skill.id)}` : "/api/admin/skills", {
-        method: skill ? "PUT" : "POST",
-        body: JSON.stringify(payload),
-      });
-      message(skill ? "Skill updated." : "Skill added.");
-      await render();
-    });
+    layout("skills", view, "Skills & Expertise");
   }
 
   async function socialPage() {
@@ -981,36 +824,20 @@
       } else if (actionName === "toggle-publish" || actionName === "toggle-featured" || actionName === "toggle-hidden") {
         const item = await findById("/api/admin/portfolio", id);
         const featured = actionName === "toggle-featured" ? !item.featured : item.featured;
-        const sections = new Set(item.sections);
         if (actionName === "toggle-publish") {
           item.published = !item.published;
           if (!item.published) item.hidden = false;
         }
         if (actionName === "toggle-featured") item.featured = featured;
         if (actionName === "toggle-hidden") item.hidden = !item.hidden;
-        if (featured) sections.add("featured"); else sections.delete("featured");
         await api(`/api/admin/portfolio/${encodeURIComponent(id)}`, {
-          method: "PUT", body: JSON.stringify({ ...item, sections: [...sections] }),
+          method: "PUT", body: JSON.stringify({ ...item }),
         });
         message(
           actionName === "toggle-publish" ? "Publication status updated." :
           actionName === "toggle-hidden" ? "Visibility updated." : "Featured status updated.",
         );
         await render();
-      } else if (actionName === "add-section") {
-        await sectionDialog();
-      } else if (actionName === "edit-section") {
-        await sectionDialog(await findById("/api/admin/sections", id));
-      } else if (actionName === "toggle-section") {
-        await toggleRecord("/api/admin/sections", id, "visible", "Section visibility updated.");
-      } else if (actionName === "delete-section") {
-        const section = await findById("/api/admin/sections", id);
-        await deleteRecord(
-          "/api/admin/sections",
-          id,
-          `Delete section "${section.title}"? Photos remain in the database but lose this section assignment.`,
-          "Section deleted.",
-        );
       } else if (actionName === "add-social") {
         await socialDialog();
       } else if (actionName === "edit-social") {
@@ -1115,10 +942,9 @@
       await loadPageTemplates(route);
       const pages = {
         dashboard,
-        portfolio: () => portfolioPage(false),
-        gallery: () => portfolioPage(true),
-        sections: sectionPage,
+        portfolio: portfolioPage,
         content: contentPage,
+        skills: skillsPage,
         social: socialPage,
         navigation: navigationPage,
         media: mediaPage,
