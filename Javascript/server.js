@@ -1305,21 +1305,26 @@ async function requestHandler(req, res) {
   const url = new URL(rawPath, `http://${req.headers.host || "localhost"}`);
   await ensureHydrated();
   if (req.method === "GET" && url.pathname === "/api/public/site") {
-    const sections = getSections().filter((section) => section.visible);
-    const items = getPortfolioItems({ publicOnly: true });
-    const photos = {};
-    for (const section of sections) {
-      photos[section.slug] = items.filter((item) => item.sections.includes(section.slug));
+    try {
+      const sections = getSections().filter((section) => section.visible);
+      const items = getPortfolioItems({ publicOnly: true });
+      const photos = {};
+      for (const section of sections) {
+        photos[section.slug] = items.filter((item) => item.sections.includes(section.slug));
+      }
+      const socialLinks = getSocialLinks().filter((link) => link.visible);
+      return sendJson(res, 200, {
+        content: getContent(),
+        navigation: getNavigation().filter((item) => item.visible),
+        sections,
+        photos,
+        socialLinks,
+        skills: getSkills({ visibleOnly: true }),
+      });
+    } catch (error) {
+      console.error("Public site API failed:", error);
+      return sendJson(res, 500, { error: "Website content could not be loaded." });
     }
-    const socialLinks = getSocialLinks().filter((link) => link.visible);
-    return sendJson(res, 200, {
-      content: getContent(),
-      navigation: getNavigation().filter((item) => item.visible),
-      sections,
-      photos,
-      socialLinks,
-      skills: getSkills({ visibleOnly: true }),
-    });
   }
   if (url.pathname.startsWith("/api/") && req.method !== "GET" && !checkOrigin(req, res)) return;
   const handled = await handleAdminApi(req, res, url);
