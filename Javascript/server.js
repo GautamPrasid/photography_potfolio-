@@ -29,6 +29,145 @@ const ALLOWED_IMAGE_TYPES = new Map([
 ]);
 
 const IS_PROD = IS_VERCEL || process.env.NODE_ENV === "production";
+const SUPABASE_URL = String(process.env.SUPABASE_URL || "").replace(/\/$/, "");
+const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY || "";
+const SUPABASE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || "portfolio";
+let hydrationPromise = null;
+let persistencePromise = Promise.resolve();
+
+function supabaseConfigured() {
+  return Boolean(SUPABASE_URL && SUPABASE_SECRET_KEY);
+}
+
+function supabaseHeaders(extra = {}) {
+  return {
+    apikey: SUPABASE_SECRET_KEY,
+    Authorization: `Bearer ${SUPABASE_SECRET_KEY}`,
+    ...extra,
+  };
+}
+
+function snapshotState() {
+  const tables = [
+    "media", "sections", "portfolio_items", "portfolio_item_sections",
+    "social_links", "social_link_locations", "site_content",
+    "navigation_items", "skills",
+  ];
+  return Object.fromEntries(tables.map((table) => [
+    table,
+    db.prepare(`SELECT * FROM ${table}`).all(),
+  ]));
+}
+
+async function uploadLocalMediaToSupabase() {
+  if (!supabaseConfigured()) return;
+  const rows = db.prepare("SELECT id, file_url, mime_type FROM media WHERE file_url LIKE '/uploads/%'").all();
+  for (const row of rows) {
+    const fileName = path.basename(decodeURIComponent(row.file_url));
+    const filePath = path.join(UPLOAD_DIR, fileName);
+    if (!fs.existsSync(filePath)) continue;
+    const data = fs.readFileSync(filePath);
+    const storagePath = fileName;
+    const response = await fetch(
+      `${SUPABASE_URL}/storage/v1/object/${SUPABASE_BUCKET}/${encodeURIComponent(storagePath)}`,
+      {
+        method: "POST",
+        headers: supabaseHeaders({
+          "Content-Type": row.mime_type,
+          "x-upsert": "true",
+        }),
+        body: data,
+      },
+    );
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      throw new Error(`Supabase Storage upload failed (${response.status}). ${detail.slice(0, 200)}`);
+    }
+    const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/${SUPABASE_BUCKET}/${encodeURIComponent(storagePath)}`;
+    db.prepare("UPDATE media SET file_url = ? WHERE id = ?").run(publicUrl, row.id);
+  }
+}
+
+async function persistToSupabase() {
+  if (!supabaseConfigured()) return;
+  await uploadLocalMediaToSupabase();
+  const state = snapshotState();
+  const response = await fetch(`${SUPABASE_URL}/rest/v1/cms_state?on_conflict=id`, {
+    method: "POST",
+    headers: supabaseHeaders({
+      "Content-Type": "application/json",
+      Prefer: "resolution=merge-duplicates,return=minimal",
+    }),
+    body: JSON.stringify({ id: 1, state, updated_at: new Date().toISOString() }),
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`Supabase persistence failed (${response.status}). ${detail.slice(0, 300)}`);
+  }
+}
+
+function schedulePersistence() {
+  if (!supabaseConfigured()) return;
+  persistencePromise = persistencePromise
+    .catch(() => {})
+    .then(() => persistToSupabase())
+    .catch((error) => console.error("Supabase persistence error:", error));
+}
+
+async function hydrateFromSupabase() {
+  if (!supabaseConfigured()) return;
+  const response = await fetch(
+    `${SUPABASE_URL}/rest/v1/cms_state?select=state&limit=1`,
+    { headers: supabaseHeaders() },
+  );
+  if (!response.ok) throw new Error(`Supabase hydration failed (${response.status}).`);
+  const rows = await response.json();
+  const state = rows?.[0]?.state;
+  if (!state || typeof state !== "object") {
+    schedulePersistence();
+    return;
+  }
+
+  db.exec("PRAGMA foreign_keys = OFF;");
+  try {
+    const tables = [
+      "portfolio_item_sections", "social_link_locations", "portfolio_items",
+      "media", "sections", "social_links", "site_content",
+      "navigation_items", "skills",
+    ];
+    for (const table of tables) db.prepare(`DELETE FROM ${table}`).run();
+    const columnsByTable = {
+      media: ["id","file_name","file_url","mime_type","alt_text","created_at","ai_metadata"],
+      sections: ["id","name","title","description","slug","is_visible","display_order","is_system"],
+      portfolio_items: ["id","media_id","title","description","category","location","photo_date","tags","is_featured","is_published","display_order","created_at","updated_at","is_hidden"],
+      portfolio_item_sections: ["portfolio_item_id","section_id"],
+      social_links: ["id","platform","display_name","url","icon","is_visible","display_order"],
+      social_link_locations: ["social_link_id","location","display_order"],
+      site_content: ["content_key","content_value","updated_at"],
+      navigation_items: ["id","label","url","icon","is_visible","display_order"],
+      skills: ["id","name","percent","icon","display_order","is_visible"],
+    };
+    for (const [table, rowsForTable] of Object.entries(state)) {
+      if (!columnsByTable[table] || !Array.isArray(rowsForTable)) continue;
+      const columns = columnsByTable[table];
+      const placeholders = columns.map(() => "?").join(",");
+      const stmt = db.prepare(`INSERT INTO ${table} (${columns.join(",")}) VALUES (${placeholders})`);
+      for (const row of rowsForTable) stmt.run(...columns.map((column) => row[column] ?? null));
+    }
+  } finally {
+    db.exec("PRAGMA foreign_keys = ON;");
+  }
+}
+
+function ensureHydrated() {
+  if (!hydrationPromise) {
+    hydrationPromise = hydrateFromSupabase().catch((error) => {
+      console.error("Supabase hydration error:", error);
+    });
+  }
+  return hydrationPromise;
+}
+
 
 if (IS_PROD) {
   const missing = [
@@ -520,7 +659,7 @@ function deleteOwnedFile(fileUrl) {
   if (path.dirname(filePath) === UPLOAD_DIR) fs.rmSync(filePath, { force: true });
 }
 
-function handleAdminApi(req, res, url) {
+async function handleAdminApi(req, res, url) {
   const pathname = url.pathname;
   if (pathname === "/api/auth/session" && req.method === "GET") {
     const session = getSession(req);
@@ -1183,8 +1322,8 @@ async function requestHandler(req, res) {
     });
   }
   if (url.pathname.startsWith("/api/") && req.method !== "GET" && !checkOrigin(req, res)) return;
-  const handled = handleAdminApi(req, res, url);
-  if (handled) return;
+  await ensureHydrated();\n  const handled = await handleAdminApi(req, res, url);
+  if (handled) {\n    if (url.pathname.startsWith("/api/admin/") && req.method !== "GET") schedulePersistence();\n    return;\n  }
   if (url.pathname.startsWith("/api/")) return sendJson(res, 404, { error: "API route not found." });
   if (req.method !== "GET" && req.method !== "HEAD") {
     res.writeHead(405, { Allow: "GET, HEAD" });
