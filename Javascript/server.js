@@ -42,7 +42,6 @@ function supabaseConfigured() {
 function supabaseHeaders(extra = {}) {
   return {
     apikey: SUPABASE_SECRET_KEY,
-    Authorization: `Bearer ${SUPABASE_SECRET_KEY}`,
     ...extra,
   };
 }
