@@ -1304,6 +1304,7 @@ function serveStatic(req, res, url) {
 async function requestHandler(req, res) {
   const rawPath = req.headers["x-forwarded-uri"] || req.headers["x-matched-path"] || req.url;
   const url = new URL(rawPath, `http://${req.headers.host || "localhost"}`);
+  await ensureHydrated();
   if (req.method === "GET" && url.pathname === "/api/public/site") {
     const sections = getSections().filter((section) => section.visible);
     const items = getPortfolioItems({ publicOnly: true });
@@ -1322,7 +1323,7 @@ async function requestHandler(req, res) {
     });
   }
   if (url.pathname.startsWith("/api/") && req.method !== "GET" && !checkOrigin(req, res)) return;
-  await ensureHydrated();\n  const handled = await handleAdminApi(req, res, url);
+  const handled = await handleAdminApi(req, res, url);
   if (handled) {\n    if (url.pathname.startsWith("/api/admin/") && req.method !== "GET") schedulePersistence();\n    return;\n  }
   if (url.pathname.startsWith("/api/")) return sendJson(res, 404, { error: "API route not found." });
   if (req.method !== "GET" && req.method !== "HEAD") {
