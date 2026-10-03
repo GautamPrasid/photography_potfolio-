@@ -1274,7 +1274,7 @@ function serveStatic(req, res, url) {
   const cleanPath = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
   const adminRoutes = new Set([
     "/admin", "/admin/login", "/admin/dashboard", "/admin/portfolio",
-    "/admin/gallery", "/admin/sections", "/admin/content", "/admin/social",
+    "/admin/content", "/admin/skills", "/admin/social",
     "/admin/navigation", "/admin/media", "/admin/settings",
   ]);
   if (adminRoutes.has(cleanPath)) {
