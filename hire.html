@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Hire Dear Praa — photographer and film maker based in Pokhara, Nepal. Available for freelance work and collaborations.">
-    <title>Dear Praa | Hire Me</title>
+    <meta name="description" content="Photography portfolio contact page">
+    <title>Photography Portfolio | Contact</title>
     <link rel="stylesheet" href="css/master.css">
     <link href="https://cdn.jsdelivr.net/npm/remixicon@4.5.0/fonts/remixicon.css" rel="stylesheet">
     <link rel="icon" type="image/png" href="assets/icon logo.png">
@@ -12,8 +12,8 @@
 <body>
 
     <header class="site-header" id="mainHeader">
-        <a class="nav__logo" href="home.html" aria-label="Dear Praa home">
-            <img src="assets/logo.png" alt="Dear Praa">
+        <a class="nav__logo" href="home.html" aria-label="Home">
+            <img src="assets/logo.png" alt="Portfolio logo">
         </a>
         <button class="nav__menu__btn" id="menu-btn" type="button" aria-label="Open navigation" aria-expanded="false">
             <i class="ri-menu-3-line"></i>
@@ -27,18 +27,18 @@
     <div class="floating-elements" id="floatingElements"></div>
 
     <section class="hire-me">
-        <img src="assets/about.png" alt="Dear Praa" id="profileImage">
+        <div class="hire-profile-image" data-db-image="contact" hidden><img id="profileImage" alt=""></div>
         <h1 data-content="contact.title"></h1>
         <p data-content="contact.description"></p>
 
         <div class="contact">
             <a href="#" id="emailBtn">
                 <i class="ri-mail-line"></i>
-                <span>Email Me</span>
+                <span data-content="contact.emailLabel"></span>
             </a>
             <a href="#" id="callBtn">
                 <i class="ri-phone-line"></i>
-                <span>Call Me</span>
+                <span data-content="contact.phoneLabel"></span>
             </a>
             <div class="socials" data-social-location="contact"></div>
         </div>
