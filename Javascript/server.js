@@ -360,7 +360,9 @@ function parseMultipart(buffer, contentType) {
     const filename = (filenameMatch?.[1] ?? filenameMatch?.[2])?.trim();
     const data = buffer.subarray(contentStart, nextBoundary);
     if (name && filename !== undefined && filename !== "") {
-      const type = headerText.match(/content-type:\s*([^\r\n]+)/i)?.[1]?.trim().toLowerCase();
+      const rawType = headerText.match(/content-type:\s*([^\r\n]+)/i)?.[1]?.trim().toLowerCase() || "";
+      let type = rawType.split(";")[0].trim();
+      if (type === "image/jpg" || type === "image/pjpeg") type = "image/jpeg";
       files.push({ name, filename: path.basename(filename), type, data });
     } else if (name) {
       const value = data.toString("utf8");
@@ -709,6 +711,9 @@ async function handlePortfolioWrite(req, res, id) {
     if (id && !existing) return sendJson(res, 404, { error: "Portfolio item not found." });
     if (!existing && !imageFile) return sendJson(res, 400, { error: "Choose an image file to upload." });
     if (imageFile) {
+      let mimeType = (imageFile.type || "").split(";")[0].trim().toLowerCase();
+      if (mimeType === "image/jpg" || mimeType === "image/pjpeg") mimeType = "image/jpeg";
+      imageFile.type = mimeType;
       if (!ALLOWED_IMAGE_TYPES.has(imageFile.type)) {
         return sendJson(res, 415, { error: "Use a JPEG, PNG, WebP, or AVIF image." });
       }
@@ -789,10 +794,22 @@ async function handlePortfolioWrite(req, res, id) {
 }
 
 function isValidImage(data, type) {
-  if (type === "image/jpeg") return data[0] === 0xff && data[1] === 0xd8 && data[data.length - 2] === 0xff && data[data.length - 1] === 0xd9;
-  if (type === "image/png") return data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
-  if (type === "image/webp") return data.toString("ascii", 0, 4) === "RIFF" && data.toString("ascii", 8, 12) === "WEBP";
-  if (type === "image/avif") return data.toString("ascii", 4, 8) === "ftyp" && data.toString("ascii", 8, 12).includes("avif");
+  if (!data || data.length < 12) return false;
+  let normType = (type || "").split(";")[0].trim().toLowerCase();
+  if (normType === "image/jpg" || normType === "image/pjpeg") normType = "image/jpeg";
+
+  if (normType === "image/jpeg") {
+    return data[0] === 0xff && data[1] === 0xd8;
+  }
+  if (normType === "image/png") {
+    return data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  }
+  if (normType === "image/webp") {
+    return data.toString("ascii", 0, 4) === "RIFF" && data.toString("ascii", 8, 12) === "WEBP";
+  }
+  if (normType === "image/avif") {
+    return data.toString("ascii", 4, 8) === "ftyp" && data.subarray(8, 128).toString("ascii").includes("avif");
+  }
   return false;
 }
 
@@ -991,7 +1008,12 @@ async function handleMediaReplace(req, res, id) {
     if (!media) return sendJson(res, 404, { error: "Media item not found." });
     const parsed = parseMultipart(await readBody(req), req.headers["content-type"] || "");
     const photo = parsed.files.find((file) => file.name === "photo");
-    if (!photo || !ALLOWED_IMAGE_TYPES.has(photo.type) || !isValidImage(photo.data, photo.type)) {
+    if (photo) {
+      let mimeType = (photo.type || "").split(";")[0].trim().toLowerCase();
+      if (mimeType === "image/jpg" || mimeType === "image/pjpeg") mimeType = "image/jpeg";
+      photo.type = mimeType;
+    }
+    if (!photo || !ALLOWED_IMAGE_TYPES.has(photo?.type) || !isValidImage(photo.data, photo.type)) {
       return sendJson(res, 415, { error: "Upload a valid JPEG, PNG, WebP, or AVIF image." });
     }
     if (photo.data.length > MAX_UPLOAD_BYTES) return sendJson(res, 413, { error: "Image exceeds the 12 MB limit." });
