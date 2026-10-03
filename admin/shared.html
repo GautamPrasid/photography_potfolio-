@@ -67,7 +67,7 @@
   <tr draggable="true" class="drag-row" data-id="">
     <td class="drag-handle" title="Drag to reorder">☰</td>
     <td><img class="admin-thumb" src="" alt=""></td>
-    <td><strong data-photo-title></strong><br><span data-photo-file></span></td>
+    <td><strong data-photo-title></strong><span class="status-pill success" data-photo-ai-badge hidden style="margin-left: 0.3rem; font-size: 0.75rem;">AI</span><br><span data-photo-file></span></td>
     <td data-photo-category></td>
     <td data-photo-sections></td>
     <td data-photo-status></td>
@@ -75,6 +75,7 @@
     <td data-photo-order></td>
     <td class="admin-actions">
       <button data-action="edit-photo">Edit</button>
+      <button data-action="ai-review">AI Analysis</button>
       <button data-action="toggle-publish"></button>
       <button data-action="toggle-hidden"></button>
       <button data-action="toggle-featured"></button>
@@ -86,9 +87,10 @@
 <template id="photo-dialog-form-template">
   <form class="admin-form" id="photo-form" enctype="multipart/form-data">
     <img class="admin-preview" data-photo-preview alt="" hidden>
-    <div class="ai-toolbar" style="margin-bottom: 1rem;">
-      <button class="admin-button-secondary" type="button" data-action="ai-analyze"><i class="ri-sparkles-line"></i> Auto-fill details with AI</button>
-      <span class="ai-status" data-ai-status style="margin-left: 0.5rem; font-size: 0.875rem; opacity: 0.8;"></span>
+    <div class="ai-toolbar" style="margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem;">
+      <button class="admin-button-secondary" type="button" data-action="open-ai-dialog"><i class="ri-sparkles-line"></i> AI Analysis</button>
+      <span class="status-pill success" data-photo-ai-badge hidden>Already analyzed</span>
+      <span class="ai-status" data-ai-status style="font-size: 0.875rem; opacity: 0.8;"></span>
     </div>
     <div class="admin-form-grid">
       <label class="admin-field full" for="photo-file-input">
@@ -122,8 +124,12 @@
         <input id="photo-order-input" type="number" name="displayOrder" value="0">
       </label>
       <label class="admin-field full" for="photo-desc-input">
-        Description / alt text
+        Description
         <textarea id="photo-desc-input" name="description"></textarea>
+      </label>
+      <label class="admin-field full" for="photo-alt-input">
+        Alt Text (Accessibility)
+        <textarea id="photo-alt-input" name="altText"></textarea>
       </label>
     </div>
     <h3>Display locations</h3>
@@ -136,6 +142,37 @@
     <div class="admin-dialog-actions">
       <button class="admin-button-secondary" type="button" data-close-dialog>Cancel</button>
       <button class="admin-button" type="submit" data-submit-label>Upload photo</button>
+    </div>
+  </form>
+</template>
+
+<template id="ai-analysis-dialog-template">
+  <form class="admin-form" id="ai-analysis-form">
+    <div style="display: flex; gap: 1rem; align-items: center; margin-bottom: 1rem;">
+      <img class="admin-preview" data-ai-preview alt="" style="max-height: 120px; object-fit: contain;">
+      <div>
+        <span class="status-pill success" data-ai-analyzed-badge hidden>Already analyzed</span>
+        <p style="margin-top: 0.5rem; font-size: 0.875rem; color: #aaa;" data-ai-status-text>Review or edit the AI-generated metadata before saving.</p>
+      </div>
+    </div>
+    <div class="admin-form-grid">
+      <label class="admin-field" for="ai-title">Title <input id="ai-title" type="text" name="title"></label>
+      <label class="admin-field" for="ai-category">Category <input id="ai-category" type="text" name="category"></label>
+      <label class="admin-field full" for="ai-description">Description <textarea id="ai-description" name="description"></textarea></label>
+      <label class="admin-field full" for="ai-alt-text">Alt Text (Accessibility) <textarea id="ai-alt-text" name="altText"></textarea></label>
+      <label class="admin-field" for="ai-location">Location <input id="ai-location" type="text" name="location"></label>
+      <label class="admin-field" for="ai-tags">Tags (comma-separated) <input id="ai-tags" type="text" name="tags"></label>
+      <label class="admin-field" for="ai-subject">Subject <input id="ai-subject" type="text" name="subject"></label>
+      <label class="admin-field" for="ai-scene">Scene <input id="ai-scene" type="text" name="scene"></label>
+      <label class="admin-field" for="ai-mood">Mood <input id="ai-mood" type="text" name="mood"></label>
+      <label class="admin-field" for="ai-lighting">Lighting <input id="ai-lighting" type="text" name="lighting"></label>
+      <label class="admin-field" for="ai-composition">Composition <input id="ai-composition" type="text" name="composition"></label>
+      <label class="admin-field" for="ai-style">Style <input id="ai-style" type="text" name="style"></label>
+    </div>
+    <div class="admin-dialog-actions" style="margin-top: 1.5rem;">
+      <button class="admin-button-secondary" type="button" data-action="ai-reanalyze"><i class="ri-refresh-line"></i> Analyze Again</button>
+      <button class="admin-button-secondary" type="button" data-close-dialog>Cancel</button>
+      <button class="admin-button" type="submit" data-action="ai-save">Save</button>
     </div>
   </form>
 </template>

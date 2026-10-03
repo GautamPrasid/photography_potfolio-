@@ -314,6 +314,14 @@
       row.querySelector('[data-action="toggle-publish"]').textContent = item.published ? "Unpublish" : "Publish";
       row.querySelector('[data-action="toggle-hidden"]').textContent = item.hidden ? "Show" : "Hide";
       row.querySelector('[data-action="toggle-featured"]').textContent = item.featured ? "Unfeature" : "Feature";
+      if (item.aiMetadata) {
+        const aiBadge = row.querySelector('[data-photo-ai-badge]');
+        if (aiBadge) aiBadge.hidden = false;
+      }
+      const aiBtn = row.querySelector('[data-action="ai-review"]');
+      if (aiBtn) {
+        aiBtn.addEventListener("click", () => aiAnalysisDialog(item));
+      }
       rows.append(row);
     });
 
@@ -394,35 +402,21 @@
       sectionsContainer.append(checkLabel);
     });
 
-    let pendingAiMetadata = null;
-    const aiBtn = form.querySelector('[data-action="ai-analyze"]');
+    const openAiBtn = form.querySelector('[data-action="open-ai-dialog"]');
+    const aiBadge = form.querySelector('[data-photo-ai-badge]');
     const aiStatus = form.querySelector('[data-ai-status]');
-    if (aiBtn) {
-      aiBtn.addEventListener("click", async () => {
-        try {
-          if (!item?.mediaId) {
-            aiStatus.textContent = "AI analysis requires an existing saved photo.";
-            return;
-          }
-          aiBtn.disabled = true;
-          aiStatus.textContent = "Analyzing photo with AI...";
-          const res = await api("/api/admin/ai/analyze-photo", {
-            method: "POST",
-            body: JSON.stringify({ mediaId: item.mediaId }),
-          });
-          if (res.title) form.elements.namedItem("title").value = res.title;
-          if (res.description) form.elements.namedItem("description").value = res.description;
-          if (res.category) form.elements.namedItem("category").value = res.category;
-          if (res.location) form.elements.namedItem("location").value = res.location;
-          if (res.photoDate) form.elements.namedItem("photoDate").value = res.photoDate;
-          if (Array.isArray(res.tags)) form.elements.namedItem("tags").value = res.tags.join(", ");
-          pendingAiMetadata = JSON.stringify(res);
-          aiStatus.textContent = "AI analysis complete! Review fields below and save.";
-        } catch (err) {
-          aiStatus.textContent = err.message || "AI analysis failed.";
-        } finally {
-          aiBtn.disabled = false;
+
+    if (item?.aiMetadata && aiBadge) {
+      aiBadge.hidden = false;
+    }
+
+    if (openAiBtn) {
+      openAiBtn.addEventListener("click", () => {
+        if (!item?.mediaId) {
+          aiStatus.textContent = "Save the uploaded photo first before running AI analysis.";
+          return;
         }
+        aiAnalysisDialog(item);
       });
     }
 
@@ -438,6 +432,9 @@
       form.elements.namedItem("tags").value = item.tags.join(", ") || "";
       form.elements.namedItem("displayOrder").value = item.displayOrder ?? 0;
       form.elements.namedItem("description").value = item.description || "";
+      if (form.elements.namedItem("altText")) {
+        form.elements.namedItem("altText").value = item.altText || "";
+      }
       form.elements.namedItem("featured").checked = Boolean(item.featured);
       form.elements.namedItem("published").checked = Boolean(item.published);
       form.elements.namedItem("hidden").checked = Boolean(item.hidden);
@@ -451,11 +448,10 @@
 
     showDialog(item ? "Edit portfolio item" : "Upload photo", form, async (dialogForm) => {
       const data = new FormData();
-      for (const key of ["title", "category", "location", "photoDate", "tags", "displayOrder", "description"]) {
-        data.set(key, formValue(dialogForm, key));
-      }
-      if (pendingAiMetadata) {
-        data.set("aiMetadata", pendingAiMetadata);
+      for (const key of ["title", "category", "location", "photoDate", "tags", "displayOrder", "description", "altText"]) {
+        if (dialogForm.elements.namedItem(key)) {
+          data.set(key, formValue(dialogForm, key));
+        }
       }
       for (const section of selectedChecks(dialogForm, "sections")) {
         data.append("sections", section);
@@ -472,6 +468,106 @@
         method: item ? "PUT" : "POST", body: data,
       });
       message(item ? "Portfolio item updated." : "Photo uploaded.");
+      await render();
+    });
+  }
+
+  async function aiAnalysisDialog(item) {
+    if (!item?.mediaId) {
+      message("Save the photo first before running AI analysis.", true);
+      return;
+    }
+    const form = template("ai-analysis-dialog-template");
+    const preview = form.querySelector("[data-ai-preview]");
+    const badge = form.querySelector("[data-ai-analyzed-badge]");
+    const statusText = form.querySelector("[data-ai-status-text]");
+    const reanalyzeBtn = form.querySelector('[data-action="ai-reanalyze"]');
+
+    preview.src = item.imageUrl;
+    preview.alt = item.title;
+
+    let aiMeta = null;
+    if (item.aiMetadata) {
+      try {
+        aiMeta = typeof item.aiMetadata === "string" ? JSON.parse(item.aiMetadata) : item.aiMetadata;
+      } catch {}
+    }
+
+    if (aiMeta) {
+      badge.hidden = false;
+      statusText.textContent = "Analyzed on " + (aiMeta.analyzedAt ? new Date(aiMeta.analyzedAt).toLocaleString() : "record");
+    }
+
+    const fillForm = (data) => {
+      form.elements.namedItem("title").value = data.title || item.title || "";
+      form.elements.namedItem("description").value = data.description || item.description || "";
+      form.elements.namedItem("altText").value = data.altText || item.altText || "";
+      form.elements.namedItem("category").value = data.category || item.category || "";
+      form.elements.namedItem("location").value = data.location || item.location || "";
+      form.elements.namedItem("tags").value = Array.isArray(data.tags) ? data.tags.join(", ") : (data.tags || (item.tags ? item.tags.join(", ") : ""));
+      form.elements.namedItem("subject").value = data.subject || aiMeta?.subject || "";
+      form.elements.namedItem("scene").value = data.scene || aiMeta?.scene || "";
+      form.elements.namedItem("mood").value = data.mood || aiMeta?.mood || "";
+      form.elements.namedItem("lighting").value = data.lighting || aiMeta?.lighting || "";
+      form.elements.namedItem("composition").value = data.composition || aiMeta?.composition || "";
+      form.elements.namedItem("style").value = data.style || aiMeta?.style || "";
+    };
+
+    fillForm({});
+
+    const runAnalysis = async () => {
+      try {
+        reanalyzeBtn.disabled = true;
+        statusText.textContent = "Analyzing photo with Gemini AI...";
+        const res = await api("/api/admin/ai/analyze-photo", {
+          method: "POST",
+          body: JSON.stringify({ mediaId: item.mediaId }),
+        });
+        fillForm(res);
+        statusText.textContent = "AI Analysis complete! Edit fields below if needed, then click Save.";
+      } catch (err) {
+        statusText.textContent = err.message || "AI analysis failed.";
+      } finally {
+        reanalyzeBtn.disabled = false;
+      }
+    };
+
+    reanalyzeBtn.addEventListener("click", runAnalysis);
+
+    if (!aiMeta) {
+      runAnalysis();
+    }
+
+    showDialog("AI Analysis & Review", form, async (dialogForm) => {
+      const data = new FormData();
+      data.set("title", formValue(dialogForm, "title"));
+      data.set("description", formValue(dialogForm, "description"));
+      data.set("altText", formValue(dialogForm, "altText"));
+      data.set("category", formValue(dialogForm, "category"));
+      data.set("location", formValue(dialogForm, "location"));
+      data.set("tags", formValue(dialogForm, "tags"));
+      data.set("displayOrder", item.displayOrder ?? 0);
+      data.set("featured", item.featured ? "true" : "false");
+      data.set("published", item.published ? "true" : "false");
+      data.set("hidden", item.hidden ? "true" : "false");
+      (item.sections || []).forEach((sec) => data.append("sections", sec));
+
+      const aiMetadataObj = {
+        subject: formValue(dialogForm, "subject"),
+        scene: formValue(dialogForm, "scene"),
+        mood: formValue(dialogForm, "mood"),
+        lighting: formValue(dialogForm, "lighting"),
+        composition: formValue(dialogForm, "composition"),
+        style: formValue(dialogForm, "style"),
+        analyzedAt: new Date().toISOString(),
+      };
+      data.set("aiMetadata", JSON.stringify(aiMetadataObj));
+
+      await api(`/api/admin/portfolio/${encodeURIComponent(item.id)}`, {
+        method: "PUT",
+        body: data,
+      });
+      message("Approved AI metadata saved.");
       await render();
     });
   }

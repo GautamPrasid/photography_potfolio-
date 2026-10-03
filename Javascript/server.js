@@ -13,7 +13,7 @@ const ROOT = path.resolve(__dirname, "..");
 const IS_VERCEL = Boolean(process.env.VERCEL);
 const DATA_DIR = IS_VERCEL ? "/tmp/data" : path.join(ROOT, "data");
 const UPLOAD_DIR = IS_VERCEL ? "/tmp/uploads" : path.join(ROOT, "uploads");
-const DB_PATH = path.join(DATA_DIR, "portfolio.sqlite");
+const DB_PATH = process.env.DB_PATH || path.join(DATA_DIR, "portfolio.sqlite");
 const PORT = Number(process.env.PORT || 3000);
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
 const SESSION_TTL = 8 * 60 * 60 * 1000;
@@ -792,10 +792,29 @@ async function handlePortfolioWrite(req, res, id) {
       }
       saveLocations(itemId, [...sections]);
       if (newMediaId) {
-        const altText = typeof body.altText === "string" ? body.altText.trim() : String(body.description || "").trim();
-        const aiMeta = typeof body.aiMetadata === "string" ? body.aiMetadata : (body.aiMetadata ? JSON.stringify(body.aiMetadata) : null);
-        db.prepare("UPDATE media SET alt_text = ?, ai_metadata = COALESCE(?, ai_metadata) WHERE id = ?")
-          .run(altText, aiMeta, newMediaId);
+        const altText = typeof body.altText === "string" ? body.altText.trim() : (typeof body.alt_text === "string" ? body.alt_text.trim() : undefined);
+        let aiMetaStr = undefined;
+        if (body.aiMetadata) {
+          try {
+            const rawObj = typeof body.aiMetadata === "string" ? JSON.parse(body.aiMetadata) : body.aiMetadata;
+            aiMetaStr = JSON.stringify({
+              subject: String(rawObj.subject || "").trim(),
+              scene: String(rawObj.scene || "").trim(),
+              mood: String(rawObj.mood || "").trim(),
+              lighting: String(rawObj.lighting || "").trim(),
+              composition: String(rawObj.composition || "").trim(),
+              style: String(rawObj.style || "").trim(),
+              analyzedAt: rawObj.analyzedAt || new Date().toISOString(),
+            });
+          } catch {}
+        }
+        if (altText !== undefined && aiMetaStr !== undefined) {
+          db.prepare("UPDATE media SET alt_text = ?, ai_metadata = ? WHERE id = ?").run(altText, aiMetaStr, newMediaId);
+        } else if (altText !== undefined) {
+          db.prepare("UPDATE media SET alt_text = ? WHERE id = ?").run(altText, newMediaId);
+        } else if (aiMetaStr !== undefined) {
+          db.prepare("UPDATE media SET ai_metadata = ? WHERE id = ?").run(aiMetaStr, newMediaId);
+        }
       }
       db.exec("COMMIT");
     } catch (error) {
