@@ -28,22 +28,36 @@ const ALLOWED_IMAGE_TYPES = new Map([
   ["image/avif", ".avif"],
 ]);
 
-if (!process.env.ADMIN_USERNAME || !process.env.ADMIN_PASSWORD) {
-  if (IS_VERCEL) {
-    process.env.ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
-    process.env.ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "ChangeMe123456!";
-    console.warn("Using default Vercel admin credentials. Set ADMIN_USERNAME and ADMIN_PASSWORD in Vercel settings.");
-  } else {
+const IS_PROD = IS_VERCEL || process.env.NODE_ENV === "production";
+
+if (IS_PROD) {
+  const missing = [
+    !process.env.SESSION_SECRET && "SESSION_SECRET",
+    !process.env.ADMIN_USERNAME && "ADMIN_USERNAME",
+    !process.env.ADMIN_PASSWORD && "ADMIN_PASSWORD",
+  ].filter(Boolean);
+  if (missing.length > 0) {
+    const msg = `Refusing to start: missing required environment variable(s) in production: ${missing.join(", ")}`;
+    console.error(msg);
+    throw new Error(msg);
+  }
+  if (process.env.ADMIN_PASSWORD.length < 12) {
+    const msg = "ADMIN_PASSWORD must be at least 12 characters in production.";
+    console.error(msg);
+    throw new Error(msg);
+  }
+} else {
+  if (!process.env.ADMIN_USERNAME || !process.env.ADMIN_PASSWORD) {
     console.error("Set ADMIN_USERNAME and ADMIN_PASSWORD in .env before starting the CMS.");
     process.exit(1);
   }
-}
-if (process.env.ADMIN_PASSWORD.length < 12) {
-  if (!IS_VERCEL) {
+  if (process.env.ADMIN_PASSWORD.length < 12) {
     console.error("ADMIN_PASSWORD must be at least 12 characters.");
     process.exit(1);
   }
 }
+
+const SESSION_SECRET = process.env.SESSION_SECRET || "dev-insecure-session-secret-local-only";
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -322,7 +336,6 @@ const insertMissingContent = db.prepare(
 );
 defaultContentEntries.forEach(([key, value]) => insertMissingContent.run(key, value));
 
-const sessions = new Map();
 const loginAttempts = new Map();
 const aiAnalysisCooldowns = new Map();
 const MIME_BY_EXTENSION = new Map([
@@ -515,19 +528,52 @@ function getSkills({ visibleOnly = false } = {}) {
     }));
 }
 
-function getSession(req) {
-  const cookie = req.headers.cookie || "";
-  const token = cookie.match(new RegExp(`(?:^|;\\s*)${SESSION_COOKIE}=([^;]+)`))?.[1];
-  if (!token) return null;
-  const key = crypto.createHash("sha256").update(token).digest("hex");
-  const session = sessions.get(key);
-  if (!session) return null;
-  if (session.expiresAt < Date.now()) {
-    sessions.delete(key);
+function createSessionToken(username) {
+  const expiresAt = Date.now() + SESSION_TTL;
+  const payload = Buffer.from(JSON.stringify({ u: username, exp: expiresAt }), "utf8").toString("base64url");
+  const signature = crypto.createHmac("sha256", SESSION_SECRET).update(payload).digest("base64url");
+  return `${payload}.${signature}`;
+}
+
+function verifySessionToken(token) {
+  if (!token || typeof token !== "string") return null;
+  const dotIndex = token.lastIndexOf(".");
+  if (dotIndex === -1) return null;
+  const payloadB64 = token.slice(0, dotIndex);
+  const signature = token.slice(dotIndex + 1);
+  if (!payloadB64 || !signature) return null;
+
+  const expectedSignature = crypto
+    .createHmac("sha256", SESSION_SECRET)
+    .update(payloadB64)
+    .digest("base64url");
+
+  const sigBuf = Buffer.from(signature, "utf8");
+  const expBuf = Buffer.from(expectedSignature, "utf8");
+  if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
     return null;
   }
-  session.expiresAt = Date.now() + SESSION_TTL;
-  return { key, session };
+
+  try {
+    const data = JSON.parse(Buffer.from(payloadB64, "base64url").toString("utf8"));
+    if (!data || typeof data !== "object") return null;
+    if (typeof data.exp !== "number" || data.exp < Date.now()) return null;
+    if (typeof data.u !== "string" || data.u !== process.env.ADMIN_USERNAME) return null;
+    return { username: data.u, expiresAt: data.exp };
+  } catch {
+    return null;
+  }
+}
+
+function getSession(req) {
+  const cookie = req.headers.cookie || "";
+  const rawToken = cookie.match(new RegExp(`(?:^|;\\s*)${SESSION_COOKIE}=([^;]+)`))?.[1];
+  if (!rawToken) return null;
+  const token = decodeURIComponent(rawToken);
+  const verified = verifySessionToken(token);
+  if (!verified) return null;
+  const key = crypto.createHash("sha256").update(token).digest("hex");
+  return { key, session: verified };
 }
 
 function requireAdmin(req, res) {
@@ -662,17 +708,13 @@ function handleAdminApi(req, res, url) {
         return sendJson(res, 401, { error: "Username or password is incorrect." });
       }
       loginAttempts.delete(ip);
-      const token = crypto.randomBytes(32).toString("base64url");
-      const key = crypto.createHash("sha256").update(token).digest("hex");
-      sessions.set(key, { username, expiresAt: Date.now() + SESSION_TTL });
+      const token = createSessionToken(username);
       return sendJson(res, 200, { authenticated: true, username }, {
         "Set-Cookie": `${SESSION_COOKIE}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL / 1000}${isSecureRequest(req) ? "; Secure" : ""}`,
       });
     }).catch((error) => sendJson(res, error.status || 400, { error: error.message }));
   }
   if (pathname === "/api/auth/logout" && req.method === "POST") {
-    const session = getSession(req);
-    if (session) sessions.delete(session.key);
     return sendJson(res, 200, { authenticated: false }, {
       "Set-Cookie": `${SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${isSecureRequest(req) ? "; Secure" : ""}`,
     });

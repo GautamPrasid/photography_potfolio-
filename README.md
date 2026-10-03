@@ -22,9 +22,23 @@ The local SQLite database is stored in `data/portfolio.sqlite`, and uploaded ima
 
 Import this repository into Vercel with the repository root as the project root. Vercel uses `vercel.json` to route public paths and the `/api/*` requests to the serverless handler. The function explicitly includes the seed images from `assets/`, which it needs when initializing its database.
 
-Set `ADMIN_USERNAME` and a unique `ADMIN_PASSWORD` (at least 12 characters) in the Vercel project's environment variables, then deploy. After deployment, check that `https://<your-vercel-domain>/api/public/site` returns JSON containing `content`, `navigation`, and `photos`. The existing Netlify deployment does not run this API, so it will continue to show missing CMS content until the site is deployed to Vercel and visitors use the Vercel domain.
+### Environment Variables on Vercel
+When deploying to Vercel (or when `NODE_ENV=production`), the application enforces strict production security and will refuse to start if any of the following variables are missing:
+- `ADMIN_USERNAME`: Unique admin username (insecure defaults are rejected in production).
+- `ADMIN_PASSWORD`: Strong password of at least 12 characters.
+- `SESSION_SECRET`: Dedicated secret key (e.g. 64-character random string from `openssl rand -hex 32`) used to cryptographically sign HMAC-SHA256 session cookies.
 
-Vercel function storage under `/tmp` is temporary. The seeded public portfolio can be displayed, but CMS database edits and uploaded files are not durable across function restarts; use a persistent database and object storage before relying on admin changes in production.
+Optional AI variables:
+- `AI_API_KEY`: Google Gemini API key for photo analysis.
+- `AI_PROVIDER`: `gemini` (default).
+- `AI_MODEL`: `gemini-2.0-flash` (default).
+
+### Important Architecture & Serverless Limitations
+- **Stateless Auth**: Sessions use HMAC-SHA256 signed HttpOnly cookies valid for 8 hours, allowing admin authentication across distributed serverless lambda instances.
+- **Ephemeral SQLite Database**: The SQLite database on Vercel is stored under `/tmp/data/portfolio.sqlite`. `/tmp` storage is ephemeral and local to each lambda instance; changes made in the admin panel are not shared across serverless instances and are wiped when instances recycle. A hosted database (such as Turso) is required for persistent data in production.
+- **Ephemeral Uploads**: Uploaded media under `/tmp/uploads` is similarly temporary and will disappear across function restarts. Object storage (such as Cloudflare R2, AWS S3, or Vercel Blob) is required for durable uploads.
+- **Brute-Force Rate Limiting**: The login attempt limiter uses an in-memory `Map` within the active Node process. On serverless platforms like Vercel, this memory is not shared across lambda instances, so the in-memory limiter is not effective against distributed attempts across cold starts.
+
 
 ## Project structure
 
