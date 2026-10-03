@@ -961,10 +961,10 @@
         if (!result.ok && result.status !== 409) throw new Error(media.error || "Could not inspect media.");
         if (media.usage?.length) {
           const usages = [...new Set(media.usage.map((entry) => entry.slug).filter(Boolean))].join(", ");
-          const choice = window.prompt(`Image currently used in: ${usages || "portfolio items"}\nType REMOVE to unpublish and remove section assignments, or DELETE to permanently delete the image and portfolio records. Cancel to keep it.`);
+          const choice = window.prompt(`Image currently used in: ${usages || "portfolio items"}\nType REMOVE to unpublish and remove portfolio assignments, or DELETE to permanently delete the image and portfolio records. Cancel to keep it.`);
           if (choice === "REMOVE") {
             await api(`/api/admin/media/${encodeURIComponent(id)}?mode=remove-from-sections`, { method: "DELETE" });
-            message("Image removed from sections and affected items unpublished.");
+            message("Image removed from portfolio assignments and affected items unpublished.");
           } else if (choice === "DELETE") {
             await api(`/api/admin/media/${encodeURIComponent(id)}?mode=permanent`, { method: "DELETE" });
             message("Image and its portfolio records permanently deleted.");
