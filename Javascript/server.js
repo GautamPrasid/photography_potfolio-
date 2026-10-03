@@ -548,7 +548,16 @@ function getSession(req) {
   const cookie = req.headers.cookie || "";
   const rawToken = cookie.match(new RegExp(`(?:^|;\\s*)${SESSION_COOKIE}=([^;]+)`))?.[1];
   if (!rawToken) return null;
-  const token = decodeURIComponent(rawToken);
+
+  let token;
+  try {
+    token = decodeURIComponent(rawToken);
+  } catch {
+    // A malformed/stale cookie should behave like an unauthenticated session,
+    // not crash the API request with HTTP 500.
+    return null;
+  }
+
   const verified = verifySessionToken(token);
   if (!verified) return null;
   const key = crypto.createHash("sha256").update(token).digest("hex");
@@ -661,8 +670,13 @@ function deleteOwnedFile(fileUrl) {
 async function handleAdminApi(req, res, url) {
   const pathname = url.pathname;
   if (pathname === "/api/auth/session" && req.method === "GET") {
-    const session = getSession(req);
-    return sendJson(res, 200, { authenticated: Boolean(session), username: session?.session.username || null });
+    try {
+      const session = getSession(req);
+      return sendJson(res, 200, { authenticated: Boolean(session), username: session?.session.username || null });
+    } catch (error) {
+      console.error("Auth session check failed:", error);
+      return sendJson(res, 200, { authenticated: false, username: null });
+    }
   }
   if (pathname === "/api/auth/login" && req.method === "POST") {
     const ip = req.socket.remoteAddress || "unknown";
