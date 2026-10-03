@@ -9,6 +9,7 @@
         <a href="/admin/dashboard" data-route="dashboard"><i class="ri-dashboard-line" aria-hidden="true"></i><span class="nav-label">Dashboard</span></a>
         <a href="/admin/portfolio" data-route="portfolio"><i class="ri-image-2-line" aria-hidden="true"></i><span class="nav-label">Portfolio</span></a>
         <a href="/admin/content" data-route="content"><i class="ri-file-text-line" aria-hidden="true"></i><span class="nav-label">Content</span></a>
+        <a href="/admin/skills" data-route="skills"><i class="ri-tools-line" aria-hidden="true"></i><span class="nav-label">Skills &amp; Expertise</span></a>
         <a href="/admin/social" data-route="social"><i class="ri-share-line" aria-hidden="true"></i><span class="nav-label">Social</span></a>
         <a href="/admin/navigation" data-route="navigation"><i class="ri-menu-line" aria-hidden="true"></i><span class="nav-label">Navigation</span></a>
         <a href="/admin/media" data-route="media"><i class="ri-folder-image-line" aria-hidden="true"></i><span class="nav-label">Media</span></a>
@@ -67,7 +68,6 @@
     <td><img class="admin-thumb" src="" alt=""></td>
     <td><strong data-photo-title></strong><span class="status-pill success" data-photo-ai-badge hidden style="margin-left: 0.3rem; font-size: 0.75rem;">AI</span><br><span data-photo-file></span></td>
     <td data-photo-category></td>
-    <td data-photo-sections></td>
     <td data-photo-status></td>
     <td data-photo-featured></td>
     <td data-photo-order></td>
@@ -130,8 +130,6 @@
         <textarea id="photo-alt-input" name="altText"></textarea>
       </label>
     </div>
-    <h3>Display locations</h3>
-    <div class="check-grid" data-photo-sections></div>
     <div class="check-grid" data-photo-status>
       <label class="admin-check"><input type="checkbox" name="featured" value="true"><span>Featured</span></label>
       <label class="admin-check"><input type="checkbox" name="published" value="true" checked><span>Published</span></label>
@@ -175,37 +173,7 @@
   </form>
 </template>
 
-<template id="section-dialog-form-template">
-  <form class="admin-form">
-    <div class="admin-form-grid">
-      <label class="admin-field" for="section-name-input">
-        Name
-        <input id="section-name-input" type="text" name="name" required>
-      </label>
-      <label class="admin-field" for="section-title-input">
-        Title
-        <input id="section-title-input" type="text" name="title" required>
-      </label>
-      <label class="admin-field" for="section-slug-input">
-        Slug
-        <input id="section-slug-input" type="text" name="slug">
-      </label>
-      <label class="admin-field" for="section-order-input">
-        Display order
-        <input id="section-order-input" type="number" name="displayOrder" value="0">
-      </label>
-      <label class="admin-field full" for="section-desc-input">
-        Description
-        <textarea id="section-desc-input" name="description"></textarea>
-      </label>
-    </div>
-    <label class="admin-check"><input type="checkbox" name="visible" value="true" checked><span>Visible</span></label>
-    <div class="admin-dialog-actions">
-      <button class="admin-button-secondary" type="button" data-close-dialog>Cancel</button>
-      <button class="admin-button" type="submit" data-submit-label>Create section</button>
-    </div>
-  </form>
-</template>
+
 
 <template id="social-dialog-form-template">
   <form class="admin-form">
