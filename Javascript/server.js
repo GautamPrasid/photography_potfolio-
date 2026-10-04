@@ -26,7 +26,7 @@ const ALLOWED_IMAGE_TYPES = new Map([
 
 // ── Supabase configuration ────────────────────────────────────────────────────
 const SUPABASE_URL = String(process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/$/, "");
-const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || "";
+const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 const SUPABASE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || "portfolio";
 
 function supabaseConfigured() {
@@ -866,6 +866,67 @@ async function handleContentWrite(req, res) {
   }
 }
 
+async function handleSiteImageUpload(req, res, key) {
+  const allowedKeys = new Set(["home.profileImage", "about.image"]);
+  if (!allowedKeys.has(key)) return sendJson(res, 404, { error: "Unknown site image." });
+
+  let newFileUrl = null;
+  try {
+    const contentType = req.headers["content-type"] || "";
+    if (!contentType.toLowerCase().startsWith("multipart/form-data")) {
+      return sendJson(res, 400, { error: "Upload must use multipart/form-data." });
+    }
+
+    const parsed = parseMultipart(await readBody(req), contentType);
+    const photo = parsed.files.find((file) => file.name === "photo") || null;
+    if (!photo) return sendJson(res, 400, { error: "Choose an image file to upload." });
+
+    let mimeType = (photo.type || "").split(";")[0].trim().toLowerCase();
+    if (mimeType === "image/jpg" || mimeType === "image/pjpeg") mimeType = "image/jpeg";
+    photo.type = mimeType;
+
+    if (!ALLOWED_IMAGE_TYPES.has(mimeType)) {
+      return sendJson(res, 415, { error: "Use a JPEG, PNG, WebP, or AVIF image." });
+    }
+    if (photo.data.length > MAX_UPLOAD_BYTES) {
+      return sendJson(res, 413, { error: "Image exceeds the 12 MB limit." });
+    }
+    if (photo.data.length < 12 || !isValidImage(photo.data, mimeType)) {
+      return sendJson(res, 415, { error: "The uploaded file does not match its image type." });
+    }
+
+    const existingRows = await sbSelect(
+      "site_content",
+      `content_key=eq.${encodeURIComponent(key)}&select=content_value`,
+    );
+    const oldUrl = existingRows[0]?.content_value || "";
+
+    const extension = ALLOWED_IMAGE_TYPES.get(mimeType);
+    const storageName = `site/${key}/${crypto.randomUUID()}${extension}`;
+    newFileUrl = await storageUpload(storageName, photo.data, mimeType);
+
+    await sbUpsert("site_content", [{
+      content_key: key,
+      content_value: newFileUrl,
+      updated_at: new Date().toISOString(),
+    }], "content_key");
+
+    const oldPath = storagePathFromUrl(oldUrl);
+    if (oldPath && oldPath !== storageName) await storageDelete(oldPath);
+
+    return sendJson(res, 200, { key, url: newFileUrl, fileName: photo.filename, mimeType });
+  } catch (error) {
+    if (newFileUrl) {
+      const storagePath = storagePathFromUrl(newFileUrl);
+      if (storagePath) await storageDelete(storagePath).catch(() => {});
+    }
+    console.error("Site image upload failed:", error);
+    return sendJson(res, error.status || 500, {
+      error: error.status ? error.message : "Could not upload site image.",
+    });
+  }
+}
+
 async function handleSocialWrite(req, res, id) {
   try {
     const body = await readJson(req);
@@ -1156,6 +1217,10 @@ async function handleAdminApi(req, res, url) {
   // Content
   if (pathname === "/api/admin/content" && req.method === "GET") return sendJson(res, 200, await getContent());
   if (pathname === "/api/admin/content" && req.method === "PUT") return handleContentWrite(req, res);
+
+  // Site images
+  const siteImageMatch = pathname.match(/^\/api\/admin\/site-image\/(home\.profileImage|about\.image)$/);
+  if (siteImageMatch && req.method === "PUT") return handleSiteImageUpload(req, res, siteImageMatch[1]);
 
   // Social
   if (pathname === "/api/admin/social" && req.method === "GET") return sendJson(res, 200, await getSocialLinks());
