@@ -121,7 +121,7 @@ async function storageUpload(storagePath, buffer, mimeType) {
   if (!supabaseConfigured()) throw new Error("Supabase is not configured.");
   const pathPart = formatStoragePath(storagePath);
   const res = await fetch(
-    `${SUPABASE_URL}/storage/v1/object/${SUPABASE_BUCKET}/${encodeURIComponent(storagePath)}`,
+    `${SUPABASE_URL}/storage/v1/object/${SUPABASE_BUCKET}/${pathPart}`,
     {
       method: "POST",
       headers: sbHeaders({ "Content-Type": mimeType, "x-upsert": "true" }),
@@ -132,7 +132,7 @@ async function storageUpload(storagePath, buffer, mimeType) {
     const detail = await res.text().catch(() => "");
     throw new Error(`Supabase Storage upload failed (${res.status}): ${detail.slice(0, 300)}`);
   }
-  return `${SUPABASE_URL}/storage/v1/object/public/${SUPABASE_BUCKET}/${encodeURIComponent(storagePath)}`;
+  return `${SUPABASE_URL}/storage/v1/object/public/${SUPABASE_BUCKET}/${pathPart}`;
 }
 
 async function storageDelete(storagePath) {
