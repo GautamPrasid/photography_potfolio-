@@ -66,6 +66,27 @@
       </section>
 
       <section class="admin-card">
+        <div class="admin-toolbar">
+          <h2 style="margin: 0;">Profile & About Images</h2>
+          <button class="admin-button" type="button" data-save-site-images>Save images</button>
+        </div>
+        <p class="admin-muted">JPEG, PNG, WebP, or AVIF. Maximum 12 MB per image.</p>
+        <div class="admin-form-grid">
+          <label class="admin-field">
+            Profile Picture
+            <input type="file" accept="image/jpeg,image/png,image/webp,image/avif" data-site-image-input="home.profileImage">
+            <img class="admin-image-preview" data-site-image-preview="home.profileImage" alt="Profile picture preview" hidden>
+          </label>
+          <label class="admin-field">
+            About Picture
+            <input type="file" accept="image/jpeg,image/png,image/webp,image/avif" data-site-image-input="about.image">
+            <img class="admin-image-preview" data-site-image-preview="about.image" alt="About picture preview" hidden>
+          </label>
+        </div>
+        <div class="admin-notice" data-site-image-status hidden></div>
+      </section>
+
+      <section class="admin-card">
         <div class="admin-toolbar"><h2 style="margin: 0;">Portfolio</h2><button class="admin-button" type="button" data-content-save="portfolio">Save website content</button></div>
         <div class="admin-form-grid">
           <label class="admin-field full" for="content-portfolio-title">
