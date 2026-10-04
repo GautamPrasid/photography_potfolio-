@@ -881,6 +881,7 @@ async function handleSocialWrite(req, res, id) {
     const allLinks = await getSocialLinks();
     return sendJson(res, existing ? 200 : 201, allLinks.find((l) => l.id === linkId));
   } catch (error) {
+    console.error("Social link save failed:", error);
     return sendJson(res, error.status || 500, { error: error.status ? error.message : "Could not save social link." });
   }
 }
@@ -1144,7 +1145,7 @@ async function handleAdminApi(req, res, url) {
   // Social
   if (pathname === "/api/admin/social" && req.method === "GET") return sendJson(res, 200, await getSocialLinks());
   if (pathname === "/api/admin/social" && req.method === "POST") return handleSocialWrite(req, res, null);
-  const socialMatch = pathname.match(/^\/api\/admin\/social\/([a-z0-9-]+)$/i);
+  const socialMatch = pathname.match(/^\/api\/admin\/social\/([^/]+)$/i);
   if (socialMatch && req.method === "PUT") return handleSocialWrite(req, res, socialMatch[1]);
   if (socialMatch && req.method === "DELETE") {
     try {
