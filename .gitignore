@@ -1,6 +1,58 @@
+# ── Secrets & environment ─────────────────────────────────────────────────────
 .env
-.env.*
-!.env.example
+.env.local
+.env.*.local
+# .env.example is intentionally NOT ignored — it is a safe public template
+
+# ── Dependencies ──────────────────────────────────────────────────────────────
 node_modules/
+
+# ── Local data & uploads (never commit user data or uploaded files) ───────────
 data/
 uploads/
+tmp/
+*.sqlite
+*.sqlite3
+*.db
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── Build / dist ──────────────────────────────────────────────────────────────
+dist/
+build/
+.next/
+.vercel/
+
+# ── OS generated files ────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ── Editor & IDE ──────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.swp
+
+# ── Testing & coverage ────────────────────────────────────────────────────────
+coverage/
+.nyc_output/
+
+# ── Misc ─────────────────────────────────────────────────────────────────────
+*.pem
+*.key
+*.cert
