@@ -589,6 +589,83 @@
       });
     });
 
+    const siteImageStatus = view.querySelector("[data-site-image-status]");
+
+    function showSiteImageStatus(text, error = false) {
+      if (!siteImageStatus) return;
+      siteImageStatus.hidden = false;
+      siteImageStatus.textContent = text;
+      siteImageStatus.classList.toggle("error", error);
+    }
+
+    view.querySelectorAll("[data-site-image-input]").forEach((input) => {
+      input.addEventListener("change", () => {
+        const file = input.files?.[0];
+        const key = input.dataset.siteImageInput;
+        const preview = view.querySelector(`[data-site-image-preview="${key}"]`);
+        if (!file || !preview) return;
+
+        const allowedTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/avif"]);
+        const maxBytes = 12 * 1024 * 1024;
+        if (!allowedTypes.has(file.type)) {
+          input.value = "";
+          showSiteImageStatus("Use a JPEG, PNG, WebP, or AVIF image.", true);
+          preview.hidden = true;
+          return;
+        }
+        if (file.size > maxBytes) {
+          input.value = "";
+          showSiteImageStatus("Image exceeds the 12 MB limit.", true);
+          preview.hidden = true;
+          return;
+        }
+
+        const objectUrl = URL.createObjectURL(file);
+        preview.onload = () => URL.revokeObjectURL(objectUrl);
+        preview.src = objectUrl;
+        preview.hidden = false;
+        showSiteImageStatus("");
+      });
+    });
+
+    view.querySelector("[data-save-site-images]")?.addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      const inputs = [...view.querySelectorAll("[data-site-image-input]")];
+      const selected = inputs.filter((input) => input.files?.[0]);
+      if (!selected.length) {
+        showSiteImageStatus("Choose a Profile Picture or About Picture first.", true);
+        return;
+      }
+
+      button.disabled = true;
+      showSiteImageStatus("Uploading image(s)…");
+      try {
+        for (const input of selected) {
+          const data = new FormData();
+          data.set("photo", input.files[0]);
+          const result = await api(
+            `/api/admin/site-image/${encodeURIComponent(input.dataset.siteImageInput)}`,
+            { method: "PUT", body: data },
+          );
+          const preview = view.querySelector(
+            `[data-site-image-preview="${input.dataset.siteImageInput}"]`,
+          );
+          if (preview && result.url) {
+            preview.src = result.url;
+            preview.hidden = false;
+          }
+          input.value = "";
+        }
+        showSiteImageStatus("Profile and About images saved.");
+        message("Site images saved.");
+      } catch (error) {
+        showSiteImageStatus(error.message, true);
+        message(error.message, true);
+      } finally {
+        button.disabled = false;
+      }
+    });
+
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       const payload = {};
