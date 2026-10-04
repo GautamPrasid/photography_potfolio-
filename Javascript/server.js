@@ -1317,7 +1317,14 @@ function serveStatic(req, res, url) {
 async function requestHandler(req, res) {
   const rawPath = req.headers["x-forwarded-uri"] || req.headers["x-matched-path"] || req.url;
   const url = new URL(rawPath, `http://${req.headers.host || "localhost"}`);
-  await ensureHydrated();
+
+  // Authentication endpoints must remain available even if Supabase hydration
+  // is temporarily unavailable. Auth/session state is independent of CMS data.
+  const isAuthRoute = url.pathname.startsWith("/api/auth/");
+  if (!isAuthRoute) {
+    await ensureHydrated();
+  }
+
   if (req.method === "GET" && url.pathname === "/api/public/site") {
     try {
       const sections = getSections().filter((section) => section.visible);
