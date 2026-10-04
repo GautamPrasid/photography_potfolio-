@@ -568,6 +568,15 @@
       if (field) field.value = value;
     }
 
+    for (const key of ["home.profileImage", "about.image"]) {
+      const preview = view.querySelector(`[data-site-image-preview="${key}"]`);
+      const url = content[key];
+      if (preview && typeof url === "string" && url.trim()) {
+        preview.src = url;
+        preview.hidden = false;
+      }
+    }
+
     view.querySelectorAll("[data-content-save]").forEach((button) => {
       button.addEventListener("click", async () => {
         const prefix = button.dataset.contentSave;
