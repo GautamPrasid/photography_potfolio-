@@ -26,7 +26,11 @@ const ALLOWED_IMAGE_TYPES = new Map([
 
 // ── Supabase configuration ────────────────────────────────────────────────────
 const SUPABASE_URL = String(process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/$/, "");
-const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+const SUPABASE_SECRET_KEY =
+  process.env.SUPABASE_SECRET_KEY ||
+  process.env.SUPABASE_SERVICE_ROLE_KEY ||
+  process.env.SUPABASE_KEY ||
+  "";
 const SUPABASE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || "portfolio";
 
 function supabaseConfigured() {
