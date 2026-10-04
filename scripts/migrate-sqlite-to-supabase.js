@@ -27,7 +27,24 @@ const path = require("node:path");
 
 const ROOT = path.resolve(__dirname, "..");
 const DB_PATH = process.env.DB_PATH || path.join(ROOT, "data", "portfolio.sqlite");
-const ASSETS_DIR = path.join(ROOT, "assets");
+const ASSET_DIRS = [
+  path.join(ROOT, "assets"),
+  path.join(ROOT, "uploads"),
+  path.join(ROOT, "public", "assets"),
+  path.join(ROOT, "public", "uploads"),
+];
+
+function findLocalMedia(fileUrl, fileName) {
+  const candidates = [];
+  const names = [...new Set([
+    fileName,
+    fileUrl ? decodeURIComponent(String(fileUrl).split("/").pop() || "") : "",
+  ].filter(Boolean))];
+  for (const dir of ASSET_DIRS) {
+    for (const name of names) candidates.push(path.join(dir, path.basename(name)));
+  }
+  return candidates.find((candidate) => fs.existsSync(candidate)) || null;
+}
 const SUPABASE_URL = String(process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/$/, "");
 const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || "";
 const SUPABASE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || "portfolio";
@@ -106,22 +123,17 @@ async function migrate() {
   const mediaToUpsert = [];
   for (const row of mediaRows) {
     let fileUrl = row.file_url;
-    if (fileUrl && fileUrl.startsWith("/assets/")) {
-      const fileName = decodeURIComponent(fileUrl.slice("/assets/".length));
-      const localPath = path.join(ASSETS_DIR, fileName);
-      if (fs.existsSync(localPath)) {
-        try {
-          fileUrl = await uploadToStorage(fileName, localPath, row.mime_type);
-          console.log("  Uploaded: " + fileName);
-        } catch (e) {
-          console.warn("  Warning: Could not upload " + fileName + ": " + e.message);
-        }
-      } else {
-        console.warn("  Warning: Asset not found: " + localPath);
+    const localPath = findLocalMedia(fileUrl, row.file_name);
+    if (localPath) {
+      try {
+        const storageName = path.basename(localPath);
+        fileUrl = await uploadToStorage(storageName, localPath, row.mime_type);
+        console.log("  Uploaded: " + storageName + " from " + path.relative(ROOT, localPath));
+      } catch (e) {
+        console.warn("  Warning: Could not upload " + row.file_name + ": " + e.message);
       }
-    }
-    if (fileUrl && fileUrl.startsWith("/uploads/")) {
-      console.warn("  Warning: /uploads/ file not migrated: " + row.file_name + " (migrate manually)");
+    } else if (fileUrl && (fileUrl.startsWith("/assets/") || fileUrl.startsWith("/uploads/"))) {
+      console.warn("  Warning: Local image not found for " + row.file_name + ". Searched assets/, uploads/, public/assets/, and public/uploads/.");
     }
     mediaToUpsert.push({
       id: row.id, file_name: row.file_name, file_url: fileUrl,
@@ -206,8 +218,8 @@ async function migrate() {
   console.log("  ✓ skills");
 
   console.log("\n✅ Migration complete! Data upserted into Supabase.");
-  console.log("   /uploads/ files were NOT migrated automatically.");
-  console.log("   Upload them manually to Supabase Storage and update media.file_url.");
+  console.log("   Existing local media found in assets/, uploads/, public/assets/, or public/uploads/ was uploaded automatically.");
+  console.log("   Any missing local files were left unchanged and must be restored separately.");
 }
 
 migrate().catch((err) => {
