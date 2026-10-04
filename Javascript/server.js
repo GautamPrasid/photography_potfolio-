@@ -874,10 +874,19 @@ async function handleContentWrite(req, res) {
     const body = await readJson(req);
     const entries = Object.entries(body);
     const allowedContentKeys = new Set([
-      "home.heroTitle", "home.heroSubtitle", "home.heroDescription",
-      "home.profileImage", "home.profileImageAlt",
-      "about.title", "about.description", "about.image", "about.imageAlt",
-      "contact.title", "contact.description", "contact.email", "contact.phone",
+      "about_text", "about_title", "about.biography", "about.description",
+      "about.image", "about.imageAlt", "about.skillsDescription", "about.skillsTitle",
+      "about.title", "contact_email", "contact_location", "contact_phone", "contact_text",
+      "contact_title", "contact.closingDescription", "contact.closingTitle",
+      "contact.description", "contact.email", "contact.location", "contact.phone",
+      "contact.profileImage", "contact.profileImageAlt", "contact.title",
+      "footer_text", "footer.contactTitle", "footer.copyright", "footer.introduction",
+      "footer.officeTitle", "footer.socialTitle", "hero_button_text", "hero_button_url",
+      "hero_subtitle", "hero_title", "home.aboutCta", "home.aboutTitle", "home.ctaText",
+      "home.heroSubtitle", "home.heroTitle", "home.introduction", "home.portfolioDescription",
+      "home.portfolioTitle", "home.profileImage", "home.profileImageAlt",
+      "portfolio.description", "portfolio.title", "seo_description", "seo_title",
+      "site_name", "site_tagline",
     ]);
     for (const [key, value] of entries) {
       if (!allowedContentKeys.has(key) || typeof value !== "string" || key.length > 120 || value.length > 10000)
