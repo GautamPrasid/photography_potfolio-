@@ -1371,7 +1371,7 @@ function serveStatic(req, res, url) {
       "Content-Type": "text/html; charset=utf-8",
       "Cache-Control": "no-store",
       "X-Content-Type-Options": "nosniff",
-      "Content-Security-Policy": "default-src 'self'; img-src 'self' data: blob: https://pogyvppbliyjhtihrtgb.supabase.co; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com; script-src 'self'; connect-src 'self' https://pogyvppbliyjhtihrtgb.supabase.co; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "Content-Security-Policy": "default-src 'self'; img-src 'self' data: blob: https://xdhusmmqkgzflxixrbis.supabase.co; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com; script-src 'self'; connect-src 'self' https://xdhusmmqkgzflxixrbis.supabase.co; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
     });
     return res.end(file);
   }
