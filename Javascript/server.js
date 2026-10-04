@@ -1410,7 +1410,8 @@ function serveStatic(req, res, url) {
 
 // ── Main request handler ──────────────────────────────────────────────────────
 async function requestHandler(req, res) {
-  // Vercel may provide rewritten path headers, but local Node must always use req.url.\n  const rawPath = IS_VERCEL\n    ? (req.headers["x-forwarded-uri"] || req.headers["x-matched-path"] || req.url)\n    : req.url;
+  // Vercel may provide rewritten path headers, but local Node must always use req.url.
+  const rawPath = IS_VERCEL\n    ? (req.headers["x-forwarded-uri"] || req.headers["x-matched-path"] || req.url)\n    : req.url;
   const url = new URL(rawPath, `http://${req.headers.host || "localhost"}`);
 
   if (req.method === "GET" && url.pathname === "/api/public/site") {
