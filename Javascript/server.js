@@ -1,6 +1,6 @@
 try {
   if (typeof process.loadEnvFile === "function") process.loadEnvFile();
-} catch {}
+} catch { }
 
 const http = require("node:http");
 const fs = require("node:fs");
@@ -113,10 +113,15 @@ async function sbDelete(table, filter) {
   }
 }
 
+function formatStoragePath(storagePath) {
+  return String(storagePath).split("/").map(encodeURIComponent).join("/");
+}
+
 async function storageUpload(storagePath, buffer, mimeType) {
   if (!supabaseConfigured()) throw new Error("Supabase is not configured.");
+  const pathPart = formatStoragePath(storagePath);
   const res = await fetch(
-    `${SUPABASE_URL}/storage/v1/object/${encodeURIComponent(SUPABASE_BUCKET)}/${storagePath.split("/").map((part) => encodeURIComponent(part)).join("/")}`,
+    `${SUPABASE_URL}/storage/v1/object/${SUPABASE_BUCKET}/${encodeURIComponent(storagePath)}`,
     {
       method: "POST",
       headers: sbHeaders({ "Content-Type": mimeType, "x-upsert": "true" }),
@@ -127,23 +132,23 @@ async function storageUpload(storagePath, buffer, mimeType) {
     const detail = await res.text().catch(() => "");
     throw new Error(`Supabase Storage upload failed (${res.status}): ${detail.slice(0, 300)}`);
   }
-  const publicPath = storagePath.split("/").map((part) => encodeURIComponent(part)).join("/");
-  return `${SUPABASE_URL}/storage/v1/object/public/${encodeURIComponent(SUPABASE_BUCKET)}/${publicPath}`;
+  return `${SUPABASE_URL}/storage/v1/object/public/${SUPABASE_BUCKET}/${encodeURIComponent(storagePath)}`;
 }
 
 async function storageDelete(storagePath) {
   if (!supabaseConfigured() || !storagePath) return;
+  const pathPart = formatStoragePath(storagePath);
   await fetch(
-    `${SUPABASE_URL}/storage/v1/object/${SUPABASE_BUCKET}/${encodeURIComponent(storagePath)}`,
+    `${SUPABASE_URL}/storage/v1/object/${SUPABASE_BUCKET}/${pathPart}`,
     { method: "DELETE", headers: sbHeaders() },
-  ).catch(() => {});
+  ).catch(() => { });
 }
 
 function storagePathFromUrl(fileUrl) {
   if (!fileUrl) return null;
   const prefix = `${SUPABASE_URL}/storage/v1/object/public/${SUPABASE_BUCKET}/`;
   if (fileUrl.startsWith(prefix)) {
-    return decodeURIComponent(fileUrl.slice(prefix.length));
+    return decodeURI(fileUrl.slice(prefix.length));
   }
   return null;
 }
@@ -782,7 +787,7 @@ async function handlePortfolioWrite(req, res, id) {
               style: String(rawObj.style || "").trim(),
               analyzedAt: rawObj.analyzedAt || new Date().toISOString(),
             });
-          } catch {}
+          } catch { }
         }
         const mediaUpdate = {};
         if (altText !== undefined) mediaUpdate.alt_text = altText;
@@ -794,8 +799,8 @@ async function handlePortfolioWrite(req, res, id) {
     } catch (error) {
       if (newFileUrl && !existing) {
         const sp = storagePathFromUrl(newFileUrl);
-        if (sp) await storageDelete(sp).catch(() => {});
-        await sbDelete("media", `id=eq.${encodeURIComponent(newMediaId)}`).catch(() => {});
+        if (sp) await storageDelete(sp).catch(() => { });
+        await sbDelete("media", `id=eq.${encodeURIComponent(newMediaId)}`).catch(() => { });
       }
       throw error;
     }
@@ -955,7 +960,7 @@ async function handleSiteImageUpload(req, res, key) {
   } catch (error) {
     if (newFileUrl) {
       const storagePath = storagePathFromUrl(newFileUrl);
-      if (storagePath) await storageDelete(storagePath).catch(() => {});
+      if (storagePath) await storageDelete(storagePath).catch(() => { });
     }
     console.error("Site image upload failed:", error);
     return sendJson(res, error.status || 500, {

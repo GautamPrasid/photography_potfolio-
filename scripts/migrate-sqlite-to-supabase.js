@@ -85,10 +85,15 @@ async function sbUpsert(table, data, onConflict) {
   }
 }
 
+function formatStoragePath(storagePath) {
+  return String(storagePath).split("/").map(encodeURIComponent).join("/");
+}
+
 async function uploadToStorage(storagePath, filePath, mimeType) {
   const buffer = fs.readFileSync(filePath);
+  const pathPart = formatStoragePath(storagePath);
   const res = await fetch(
-    SUPABASE_URL + "/storage/v1/object/" + SUPABASE_BUCKET + "/" + encodeURIComponent(storagePath),
+    SUPABASE_URL + "/storage/v1/object/" + SUPABASE_BUCKET + "/" + pathPart,
     {
       method: "POST",
       headers: sbHeaders({ "Content-Type": mimeType, "x-upsert": "true" }),
@@ -99,7 +104,7 @@ async function uploadToStorage(storagePath, filePath, mimeType) {
     const detail = await res.text().catch(() => "");
     throw new Error("Storage upload failed (" + res.status + "): " + detail.slice(0, 300));
   }
-  return SUPABASE_URL + "/storage/v1/object/public/" + SUPABASE_BUCKET + "/" + encodeURIComponent(storagePath);
+  return SUPABASE_URL + "/storage/v1/object/public/" + SUPABASE_BUCKET + "/" + pathPart;
 }
 
 function bool(v) { return v === 1 || v === true; }
