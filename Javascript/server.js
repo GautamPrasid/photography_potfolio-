@@ -1260,7 +1260,7 @@ async function handleAdminApi(req, res, url) {
   if (portfolioMatch && req.method === "DELETE") return handlePortfolioDelete(res, portfolioMatch[1]);
 
   // Sections
-  if (pathname === "/api/admin/sections" && req.method === "GET") return sendJson(res, 200, await getSections());
+  if (pathname === "/api/admin/sections" && req.method === "GET") { try { return sendJson(res, 200, await getSections()); } catch (error) { console.error("Admin sections load failed:", error); return sendJson(res, 500, { error: "Could not load sections." }); } }
   if (pathname === "/api/admin/sections" && req.method === "POST") return handleSectionWrite(req, res, null);
   const sectionMatch = pathname.match(/^\/api\/admin\/sections\/([a-z0-9-]+)$/i);
   if (sectionMatch && req.method === "PUT") return handleSectionWrite(req, res, sectionMatch[1]);
@@ -1282,7 +1282,7 @@ async function handleAdminApi(req, res, url) {
   if (siteImageMatch && req.method === "PUT") return handleSiteImageUpload(req, res, siteImageMatch[1]);
 
   // Social
-  if (pathname === "/api/admin/social" && req.method === "GET") return sendJson(res, 200, await getSocialLinks());
+  if (pathname === "/api/admin/social" && req.method === "GET") { try { return sendJson(res, 200, await getSocialLinks()); } catch (error) { console.error("Admin social load failed:", error); return sendJson(res, 500, { error: "Could not load social links." }); } }
   if (pathname === "/api/admin/social" && req.method === "POST") return handleSocialWrite(req, res, null);
   const socialMatch = pathname.match(/^\/api\/admin\/social\/([^/]+)$/i);
   if (socialMatch && req.method === "PUT") return handleSocialWrite(req, res, socialMatch[1]);
@@ -1294,7 +1294,7 @@ async function handleAdminApi(req, res, url) {
   }
 
   // Navigation
-  if (pathname === "/api/admin/navigation" && req.method === "GET") return sendJson(res, 200, await getNavigation());
+  if (pathname === "/api/admin/navigation" && req.method === "GET") { try { return sendJson(res, 200, await getNavigation()); } catch (error) { console.error("Admin navigation load failed:", error); return sendJson(res, 500, { error: "Could not load navigation." }); } }
   if (pathname === "/api/admin/navigation" && req.method === "POST") return handleNavigationWrite(req, res, null);
   const navigationMatch = pathname.match(/^\/api\/admin\/navigation\/([a-z0-9-]+)$/i);
   if (navigationMatch && req.method === "PUT") return handleNavigationWrite(req, res, navigationMatch[1]);
@@ -1329,7 +1329,7 @@ async function handleAdminApi(req, res, url) {
   if (pathname === "/api/admin/ai/analyze-photo" && req.method === "POST") return handleAiAnalyze(req, res);
 
   // Skills
-  if (pathname === "/api/admin/skills" && req.method === "GET") return sendJson(res, 200, await getSkills());
+  if (pathname === "/api/admin/skills" && req.method === "GET") { try { return sendJson(res, 200, await getSkills()); } catch (error) { console.error("Admin skills load failed:", error); return sendJson(res, 500, { error: "Could not load skills." }); } }
   if (pathname === "/api/admin/skills" && req.method === "POST") return handleSkillWrite(req, res, null);
   const skillMatch = pathname.match(/^\/api\/admin\/skills\/([a-z0-9-]+)$/i);
   if (skillMatch && req.method === "PUT") return handleSkillWrite(req, res, skillMatch[1]);
