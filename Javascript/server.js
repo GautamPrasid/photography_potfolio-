@@ -446,15 +446,30 @@ async function saveLocations(itemId, slugs) {
 }
 
 async function assignSocialLocations(linkId, locations) {
+  const aliases = new Map([
+    ["home", "homepage"],
+    ["main", "homepage"],
+    ["index", "homepage"],
+    ["about-page", "about"],
+    ["portfolio-page", "portfolio"],
+    ["contact-page", "contact"],
+    ["footer-page", "footer"],
+  ]);
   const allowed = new Set(["header", "homepage", "about", "portfolio", "contact", "footer"]);
-  if (locations.some((l) => !allowed.has(l))) {
+  const normalized = [...new Set(
+    (Array.isArray(locations) ? locations : [])
+      .map((location) => String(location || "").trim().toLowerCase())
+      .filter(Boolean)
+      .map((location) => aliases.get(location) || location),
+  )];
+  if (normalized.some((location) => !allowed.has(location))) {
     throw Object.assign(new Error("Unknown social display location."), { status: 400 });
   }
   await sbDelete("social_link_locations", `social_link_id=eq.${encodeURIComponent(linkId)}`);
-  if (!locations.length) return;
+  if (!normalized.length) return;
   await sbInsert(
     "social_link_locations",
-    locations.map((loc, i) => ({ social_link_id: linkId, location: loc, display_order: i })),
+    normalized.map((loc, i) => ({ social_link_id: linkId, location: loc, display_order: i })),
     { returning: "minimal" },
   );
 }
