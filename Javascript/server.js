@@ -127,7 +127,8 @@ async function storageUpload(storagePath, buffer, mimeType) {
     const detail = await res.text().catch(() => "");
     throw new Error(`Supabase Storage upload failed (${res.status}): ${detail.slice(0, 300)}`);
   }
-  return `${SUPABASE_URL}/storage/v1/object/public/${SUPABASE_BUCKET}/${encodeURIComponent(storagePath)}`;
+  const publicPath = storagePath.split("/").map((part) => encodeURIComponent(part)).join("/");
+  return `${SUPABASE_URL}/storage/v1/object/public/${encodeURIComponent(SUPABASE_BUCKET)}/${publicPath}`;
 }
 
 async function storageDelete(storagePath) {
