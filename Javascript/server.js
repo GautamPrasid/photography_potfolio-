@@ -1348,6 +1348,17 @@ async function handleAdminApi(req, res, url) {
 // ── Static file serving ───────────────────────────────────────────────────────
 function serveStatic(req, res, url) {
   const pathname = decodeURIComponent(url.pathname);
+  if (pathname === "/favicon.ico") {
+    const favicon = path.join(ROOT, "assets", "logo.png");
+    if (fs.existsSync(favicon) && fs.statSync(favicon).isFile()) {
+      res.writeHead(200, {
+        "Content-Type": "image/png",
+        "Cache-Control": "public, max-age=86400",
+        "X-Content-Type-Options": "nosniff",
+      });
+      return fs.createReadStream(favicon).pipe(res);
+    }
+  }
   const cleanPath = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
   const adminRoutes = new Set([
     "/admin", "/admin/login", "/admin/dashboard", "/admin/portfolio",
@@ -1360,7 +1371,7 @@ function serveStatic(req, res, url) {
       "Content-Type": "text/html; charset=utf-8",
       "Cache-Control": "no-store",
       "X-Content-Type-Options": "nosniff",
-      "Content-Security-Policy": "default-src 'self'; img-src 'self' data: https://pogyvppbliyjhtihrtgb.supabase.co; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com; script-src 'self'; connect-src 'self' https://pogyvppbliyjhtihrtgb.supabase.co; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "Content-Security-Policy": "default-src 'self'; img-src 'self' data: blob: https://pogyvppbliyjhtihrtgb.supabase.co; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com; script-src 'self'; connect-src 'self' https://pogyvppbliyjhtihrtgb.supabase.co; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
     });
     return res.end(file);
   }
