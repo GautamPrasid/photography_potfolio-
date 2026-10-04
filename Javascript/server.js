@@ -116,7 +116,7 @@ async function sbDelete(table, filter) {
 async function storageUpload(storagePath, buffer, mimeType) {
   if (!supabaseConfigured()) throw new Error("Supabase is not configured.");
   const res = await fetch(
-    `${SUPABASE_URL}/storage/v1/object/${SUPABASE_BUCKET}/${encodeURIComponent(storagePath)}`,
+    `${SUPABASE_URL}/storage/v1/object/${encodeURIComponent(SUPABASE_BUCKET)}/${storagePath.split("/").map((part) => encodeURIComponent(part)).join("/")}`,
     {
       method: "POST",
       headers: sbHeaders({ "Content-Type": mimeType, "x-upsert": "true" }),
@@ -873,8 +873,14 @@ async function handleContentWrite(req, res) {
   try {
     const body = await readJson(req);
     const entries = Object.entries(body);
+    const allowedContentKeys = new Set([
+      "home.heroTitle", "home.heroSubtitle", "home.heroDescription",
+      "home.profileImage", "home.profileImageAlt",
+      "about.title", "about.description", "about.image", "about.imageAlt",
+      "contact.title", "contact.description", "contact.email", "contact.phone",
+    ]);
     for (const [key, value] of entries) {
-      if (typeof value !== "string" || key.length > 120 || value.length > 10000)
+      if (!allowedContentKeys.has(key) || typeof value !== "string" || key.length > 120 || value.length > 10000)
         throw Object.assign(new Error(`Invalid content value for ${key}.`), { status: 400 });
     }
     const rows = entries.map(([key, value]) => ({
@@ -1225,7 +1231,14 @@ async function handleAdminApi(req, res, url) {
   }
 
   // Portfolio
-  if (pathname === "/api/admin/portfolio" && req.method === "GET") return sendJson(res, 200, await getPortfolioItems());
+  if (pathname === "/api/admin/portfolio" && req.method === "GET") {
+    try {
+      return sendJson(res, 200, await getPortfolioItems());
+    } catch (error) {
+      console.error("Admin portfolio load failed:", error);
+      return sendJson(res, error.status || 500, { error: "Could not load portfolio items." });
+    }
+  }
   if (pathname === "/api/admin/portfolio" && req.method === "POST") return handlePortfolioWrite(req, res, null);
   const portfolioMatch = pathname.match(/^\/api\/admin\/portfolio\/([a-f0-9-]+)$/i);
   if (portfolioMatch && req.method === "PUT") return handlePortfolioWrite(req, res, portfolioMatch[1]);
@@ -1239,7 +1252,14 @@ async function handleAdminApi(req, res, url) {
   if (sectionMatch && req.method === "DELETE") return handleSectionDelete(res, sectionMatch[1]);
 
   // Content
-  if (pathname === "/api/admin/content" && req.method === "GET") return sendJson(res, 200, await getContent());
+  if (pathname === "/api/admin/content" && req.method === "GET") {
+    try {
+      return sendJson(res, 200, await getContent());
+    } catch (error) {
+      console.error("Admin content load failed:", error);
+      return sendJson(res, error.status || 500, { error: "Could not load site content." });
+    }
+  }
   if (pathname === "/api/admin/content" && req.method === "PUT") return handleContentWrite(req, res);
 
   // Site images
