@@ -665,8 +665,8 @@
           }
           input.value = "";
         }
-        showSiteImageStatus("Profile and About images saved.");
-        message("Site images saved.");
+        showSiteImageStatus(selected.length === 2 ? "Profile and About images saved." : "Selected site image saved.");
+        message(selected.length === 2 ? "Profile and About images saved." : "Site image saved.");
       } catch (error) {
         showSiteImageStatus(error.message, true);
         message(error.message, true);
