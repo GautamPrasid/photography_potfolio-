@@ -1416,24 +1416,35 @@ async function requestHandler(req, res) {
 
   if (req.method === "GET" && url.pathname === "/api/public/site") {
     try {
-      const sections = (await getSections()).filter((s) => s.visible);
-      const items = await getPortfolioItems({ publicOnly: true });
+      const sections = (await getSections().catch((e) => { console.error("getSections error:", e.message); return []; })).filter((s) => s.visible);
+      const items = await getPortfolioItems({ publicOnly: true }).catch((e) => { console.error("getPortfolioItems error:", e.message); return []; });
       const photos = {};
       for (const section of sections) {
         photos[section.slug] = items.filter((item) => item.sections.includes(section.slug));
       }
-      const socialLinks = (await getSocialLinks()).filter((l) => l.visible);
+      const socialLinks = (await getSocialLinks().catch((e) => { console.error("getSocialLinks error:", e.message); return []; })).filter((l) => l.visible);
+      const content = await getContent().catch((e) => { console.error("getContent error:", e.message); return {}; });
+      const navigation = (await getNavigation().catch((e) => { console.error("getNavigation error:", e.message); return []; })).filter((item) => item.visible);
+      const skills = await getSkills({ visibleOnly: true }).catch((e) => { console.error("getSkills error:", e.message); return []; });
+
       return sendJson(res, 200, {
-        content: await getContent(),
-        navigation: (await getNavigation()).filter((item) => item.visible),
+        content,
+        navigation,
         sections,
         photos,
         socialLinks,
-        skills: await getSkills({ visibleOnly: true }),
+        skills,
       });
     } catch (error) {
       console.error("Public site API failed:", error);
-      return sendJson(res, 500, { error: "Website content could not be loaded." });
+      return sendJson(res, 200, {
+        content: {},
+        navigation: [],
+        sections: [],
+        photos: {},
+        socialLinks: [],
+        skills: [],
+      });
     }
   }
 
