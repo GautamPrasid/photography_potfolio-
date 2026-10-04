@@ -151,22 +151,26 @@ function storagePathFromUrl(fileUrl) {
 const IS_PROD = IS_VERCEL || process.env.NODE_ENV === "production";
 
 if (IS_PROD) {
+  // Public pages only need Supabase. Do not crash the entire Vercel function
+  // because an admin-only secret is missing; admin routes validate their own
+  // configuration when they are used.
   const missing = [
-    !process.env.SESSION_SECRET && "SESSION_SECRET",
-    !process.env.ADMIN_USERNAME && "ADMIN_USERNAME",
-    !process.env.ADMIN_PASSWORD && "ADMIN_PASSWORD",
     !SUPABASE_URL && "SUPABASE_URL",
     !SUPABASE_SECRET_KEY && "SUPABASE_SECRET_KEY",
   ].filter(Boolean);
   if (missing.length > 0) {
-    const msg = `Refusing to start: missing required environment variable(s) in production: ${missing.join(", ")}`;
-    console.error(msg);
-    throw new Error(msg);
+    console.error(`Supabase configuration is incomplete: ${missing.join(", ")}`);
   }
-  if (process.env.ADMIN_PASSWORD.length < 8) {
-    const msg = "ADMIN_PASSWORD must be at least 8 characters in production.";
-    console.error(msg);
-    throw new Error(msg);
+
+  const adminMissing = [
+    !process.env.SESSION_SECRET && "SESSION_SECRET",
+    !process.env.ADMIN_USERNAME && "ADMIN_USERNAME",
+    !process.env.ADMIN_PASSWORD && "ADMIN_PASSWORD",
+  ].filter(Boolean);
+  if (adminMissing.length > 0) {
+    console.error(`Admin configuration is incomplete: ${adminMissing.join(", ")}`);
+  } else if (process.env.ADMIN_PASSWORD.length < 8) {
+    console.error("ADMIN_PASSWORD must be at least 8 characters in production.");
   }
 } else {
   if (!process.env.ADMIN_USERNAME || !process.env.ADMIN_PASSWORD) {
@@ -523,7 +527,20 @@ function getSession(req) {
   return { key, session: verified };
 }
 
+function adminConfigured() {
+  return Boolean(
+    process.env.SESSION_SECRET &&
+    process.env.ADMIN_USERNAME &&
+    process.env.ADMIN_PASSWORD &&
+    process.env.ADMIN_PASSWORD.length >= 8,
+  );
+}
+
 function requireAdmin(req, res) {
+  if (!adminConfigured()) {
+    sendJson(res, 503, { error: "Admin authentication is not configured on the server." });
+    return false;
+  }
   if (!getSession(req)) {
     sendJson(res, 401, { error: "Authentication required." });
     return false;
@@ -1138,6 +1155,9 @@ async function handleAdminApi(req, res, url) {
   }
 
   if (pathname === "/api/auth/login" && req.method === "POST") {
+    if (!adminConfigured()) {
+      return sendJson(res, 503, { error: "Admin authentication is not configured on the server." });
+    }
     const ip = req.socket.remoteAddress || "unknown";
     const attempts = loginAttempts.get(ip) || { count: 0, until: Date.now() + 15 * 60 * 1000 };
     if (attempts.until < Date.now()) { attempts.count = 0; attempts.until = Date.now() + 15 * 60 * 1000; }
