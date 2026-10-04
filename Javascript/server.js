@@ -1410,11 +1410,7 @@ function serveStatic(req, res, url) {
 
 // ── Main request handler ──────────────────────────────────────────────────────
 async function requestHandler(req, res) {
-<<<<<<< Updated upstream
-  // Vercel may provide rewritten path headers, but local Node must always use req.url.
-=======
   // Vercel may provide rewritten path headers; local Node must always use req.url.
->>>>>>> Stashed changes
   const rawPath = IS_VERCEL
     ? (req.headers["x-forwarded-uri"] || req.headers["x-matched-path"] || req.url)
     : req.url;
