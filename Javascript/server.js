@@ -38,16 +38,11 @@ function supabaseConfigured() {
 }
 
 function sbHeaders(extra = {}) {
-  const headers = {
+  return {
     apikey: SUPABASE_SECRET_KEY,
+    Authorization: `Bearer ${SUPABASE_SECRET_KEY}`,
     ...extra,
   };
-  // Modern Supabase secret keys are not JWTs and must not be sent as
-  // Authorization: Bearer. Keep Bearer support only for legacy JWT keys.
-  if (SUPABASE_SECRET_KEY.startsWith("eyJ")) {
-    headers.Authorization = `Bearer ${SUPABASE_SECRET_KEY}`;
-  }
-  return headers;
 }
 
 async function sbSelect(table, query = "") {
