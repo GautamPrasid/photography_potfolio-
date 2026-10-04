@@ -6,14 +6,10 @@ const http = require("node:http");
 const fs = require("node:fs");
 const path = require("node:path");
 const crypto = require("node:crypto");
-const { DatabaseSync } = require("node:sqlite");
 const { analyzePhoto } = require("./ai-photo-service.js");
 
 const ROOT = path.resolve(__dirname, "..");
 const IS_VERCEL = Boolean(process.env.VERCEL);
-const DATA_DIR = IS_VERCEL ? "/tmp/data" : path.join(ROOT, "data");
-const UPLOAD_DIR = IS_VERCEL ? "/tmp/uploads" : path.join(ROOT, "uploads");
-const DB_PATH = process.env.DB_PATH || path.join(DATA_DIR, "portfolio.sqlite");
 const PORT = Number(process.env.PORT || 3000);
 const MAX_UPLOAD_BYTES = 12 * 1024 * 1024;
 const SESSION_TTL = 8 * 60 * 60 * 1000;
@@ -28,151 +24,135 @@ const ALLOWED_IMAGE_TYPES = new Map([
   ["image/avif", ".avif"],
 ]);
 
-const IS_PROD = IS_VERCEL || process.env.NODE_ENV === "production";
-const SUPABASE_URL = String(process.env.SUPABASE_URL || "").replace(/\/$/, "");
-const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY || "";
+// ── Supabase configuration ────────────────────────────────────────────────────
+const SUPABASE_URL = String(process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "").replace(/\/$/, "");
+const SUPABASE_SECRET_KEY = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_KEY || process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || "";
 const SUPABASE_BUCKET = process.env.SUPABASE_STORAGE_BUCKET || "portfolio";
-let hydrationPromise = null;
-let persistencePromise = Promise.resolve();
 
 function supabaseConfigured() {
   return Boolean(SUPABASE_URL && SUPABASE_SECRET_KEY);
 }
 
-function supabaseHeaders(extra = {}) {
+function sbHeaders(extra = {}) {
   return {
     apikey: SUPABASE_SECRET_KEY,
+    Authorization: `Bearer ${SUPABASE_SECRET_KEY}`,
     ...extra,
   };
 }
 
-function snapshotState() {
-  const tables = [
-    "media", "sections", "portfolio_items", "portfolio_item_sections",
-    "social_links", "social_link_locations", "site_content",
-    "navigation_items", "skills",
-  ];
-  return Object.fromEntries(tables.map((table) => [
-    table,
-    db.prepare(`SELECT * FROM ${table}`).all(),
-  ]));
-}
-
-async function uploadLocalMediaToSupabase() {
-  if (!supabaseConfigured()) return;
-  const rows = db.prepare("SELECT id, file_url, mime_type FROM media WHERE file_url LIKE '/uploads/%'").all();
-  for (const row of rows) {
-    const fileName = path.basename(decodeURIComponent(row.file_url));
-    const filePath = path.join(UPLOAD_DIR, fileName);
-    if (!fs.existsSync(filePath)) continue;
-    const data = fs.readFileSync(filePath);
-    const storagePath = fileName;
-    const response = await fetch(
-      `${SUPABASE_URL}/storage/v1/object/${SUPABASE_BUCKET}/${encodeURIComponent(storagePath)}`,
-      {
-        method: "POST",
-        headers: supabaseHeaders({
-          "Content-Type": row.mime_type,
-          "x-upsert": "true",
-        }),
-        body: data,
-      },
-    );
-    if (!response.ok) {
-      const detail = await response.text().catch(() => "");
-      throw new Error(`Supabase Storage upload failed (${response.status}). ${detail.slice(0, 200)}`);
-    }
-    const publicUrl = `${SUPABASE_URL}/storage/v1/object/public/${SUPABASE_BUCKET}/${encodeURIComponent(storagePath)}`;
-    db.prepare("UPDATE media SET file_url = ? WHERE id = ?").run(publicUrl, row.id);
+async function sbSelect(table, query = "") {
+  if (!supabaseConfigured()) throw new Error("Supabase is not configured.");
+  const url = `${SUPABASE_URL}/rest/v1/${table}${query ? "?" + query : ""}`;
+  const res = await fetch(url, { headers: sbHeaders({ Accept: "application/json" }) });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}));
+    throw new Error(`Supabase SELECT ${table} failed (${res.status}): ${detail.message || JSON.stringify(detail)}`);
   }
+  return res.json();
 }
 
-async function persistToSupabase() {
-  if (!supabaseConfigured()) return;
-  await uploadLocalMediaToSupabase();
-  const state = snapshotState();
-  const response = await fetch(`${SUPABASE_URL}/rest/v1/cms_state?on_conflict=id`, {
+async function sbInsert(table, data, { onConflict = null, returning = "representation" } = {}) {
+  if (!supabaseConfigured()) throw new Error("Supabase is not configured.");
+  const prefer = [`return=${returning}`, onConflict ? "resolution=merge-duplicates" : null].filter(Boolean).join(",");
+  const url = `${SUPABASE_URL}/rest/v1/${table}${onConflict ? "?on_conflict=" + onConflict : ""}`;
+  const res = await fetch(url, {
     method: "POST",
-    headers: supabaseHeaders({
-      "Content-Type": "application/json",
-      Prefer: "resolution=merge-duplicates,return=minimal",
-    }),
-    body: JSON.stringify({ id: 1, state, updated_at: new Date().toISOString() }),
+    headers: sbHeaders({ "Content-Type": "application/json", Prefer: prefer }),
+    body: JSON.stringify(data),
   });
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new Error(`Supabase persistence failed (${response.status}). ${detail.slice(0, 300)}`);
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}));
+    throw new Error(`Supabase INSERT ${table} failed (${res.status}): ${detail.message || JSON.stringify(detail)}`);
+  }
+  if (returning === "representation") return res.json();
+  return null;
+}
+
+async function sbUpdate(table, filter, data) {
+  if (!supabaseConfigured()) throw new Error("Supabase is not configured.");
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${filter}`, {
+    method: "PATCH",
+    headers: sbHeaders({ "Content-Type": "application/json", Prefer: "return=representation" }),
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}));
+    throw new Error(`Supabase UPDATE ${table} failed (${res.status}): ${detail.message || JSON.stringify(detail)}`);
+  }
+  return res.json();
+}
+
+async function sbUpsert(table, data, onConflict) {
+  if (!supabaseConfigured()) throw new Error("Supabase is not configured.");
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?on_conflict=${onConflict}`, {
+    method: "POST",
+    headers: sbHeaders({ "Content-Type": "application/json", Prefer: "resolution=merge-duplicates,return=representation" }),
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}));
+    throw new Error(`Supabase UPSERT ${table} failed (${res.status}): ${detail.message || JSON.stringify(detail)}`);
+  }
+  return res.json();
+}
+
+async function sbDelete(table, filter) {
+  if (!supabaseConfigured()) throw new Error("Supabase is not configured.");
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${filter}`, {
+    method: "DELETE",
+    headers: sbHeaders({ Prefer: "return=minimal" }),
+  });
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}));
+    throw new Error(`Supabase DELETE ${table} failed (${res.status}): ${detail.message || JSON.stringify(detail)}`);
   }
 }
 
-function schedulePersistence() {
-  if (!supabaseConfigured()) return;
-  persistencePromise = persistencePromise
-    .catch(() => {})
-    .then(() => persistToSupabase())
-    .catch((error) => console.error("Supabase persistence error:", error));
-}
-
-async function hydrateFromSupabase() {
-  if (!supabaseConfigured()) return;
-  const response = await fetch(
-    `${SUPABASE_URL}/rest/v1/cms_state?select=state&limit=1`,
-    { headers: supabaseHeaders() },
+async function storageUpload(storagePath, buffer, mimeType) {
+  if (!supabaseConfigured()) throw new Error("Supabase is not configured.");
+  const res = await fetch(
+    `${SUPABASE_URL}/storage/v1/object/${SUPABASE_BUCKET}/${encodeURIComponent(storagePath)}`,
+    {
+      method: "POST",
+      headers: sbHeaders({ "Content-Type": mimeType, "x-upsert": "true" }),
+      body: buffer,
+    },
   );
-  if (!response.ok) throw new Error(`Supabase hydration failed (${response.status}).`);
-  const rows = await response.json();
-  const state = rows?.[0]?.state;
-  if (!state || typeof state !== "object") {
-    schedulePersistence();
-    return;
+  if (!res.ok) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`Supabase Storage upload failed (${res.status}): ${detail.slice(0, 300)}`);
   }
-
-  db.exec("PRAGMA foreign_keys = OFF;");
-  try {
-    const tables = [
-      "portfolio_item_sections", "social_link_locations", "portfolio_items",
-      "media", "sections", "social_links", "site_content",
-      "navigation_items", "skills",
-    ];
-    for (const table of tables) db.prepare(`DELETE FROM ${table}`).run();
-    const columnsByTable = {
-      media: ["id","file_name","file_url","mime_type","alt_text","created_at","ai_metadata"],
-      sections: ["id","name","title","description","slug","is_visible","display_order","is_system"],
-      portfolio_items: ["id","media_id","title","description","category","location","photo_date","tags","is_featured","is_published","display_order","created_at","updated_at","is_hidden"],
-      portfolio_item_sections: ["portfolio_item_id","section_id"],
-      social_links: ["id","platform","display_name","url","icon","is_visible","display_order"],
-      social_link_locations: ["social_link_id","location","display_order"],
-      site_content: ["content_key","content_value","updated_at"],
-      navigation_items: ["id","label","url","icon","is_visible","display_order"],
-      skills: ["id","name","percent","icon","display_order","is_visible"],
-    };
-    for (const [table, rowsForTable] of Object.entries(state)) {
-      if (!columnsByTable[table] || !Array.isArray(rowsForTable)) continue;
-      const columns = columnsByTable[table];
-      const placeholders = columns.map(() => "?").join(",");
-      const stmt = db.prepare(`INSERT INTO ${table} (${columns.join(",")}) VALUES (${placeholders})`);
-      for (const row of rowsForTable) stmt.run(...columns.map((column) => row[column] ?? null));
-    }
-  } finally {
-    db.exec("PRAGMA foreign_keys = ON;");
-  }
+  return `${SUPABASE_URL}/storage/v1/object/public/${SUPABASE_BUCKET}/${encodeURIComponent(storagePath)}`;
 }
 
-function ensureHydrated() {
-  if (!hydrationPromise) {
-    hydrationPromise = hydrateFromSupabase().catch((error) => {
-      console.error("Supabase hydration error:", error);
-    });
-  }
-  return hydrationPromise;
+async function storageDelete(storagePath) {
+  if (!supabaseConfigured() || !storagePath) return;
+  await fetch(
+    `${SUPABASE_URL}/storage/v1/object/${SUPABASE_BUCKET}/${encodeURIComponent(storagePath)}`,
+    { method: "DELETE", headers: sbHeaders() },
+  ).catch(() => {});
 }
 
+function storagePathFromUrl(fileUrl) {
+  if (!fileUrl) return null;
+  const prefix = `${SUPABASE_URL}/storage/v1/object/public/${SUPABASE_BUCKET}/`;
+  if (fileUrl.startsWith(prefix)) {
+    return decodeURIComponent(fileUrl.slice(prefix.length));
+  }
+  return null;
+}
+
+// ── Production startup checks ─────────────────────────────────────────────────
+const IS_PROD = IS_VERCEL || process.env.NODE_ENV === "production";
 
 if (IS_PROD) {
   const missing = [
     !process.env.SESSION_SECRET && "SESSION_SECRET",
     !process.env.ADMIN_USERNAME && "ADMIN_USERNAME",
     !process.env.ADMIN_PASSWORD && "ADMIN_PASSWORD",
+    !SUPABASE_URL && "SUPABASE_URL",
+    !SUPABASE_SECRET_KEY && "SUPABASE_SECRET_KEY",
   ].filter(Boolean);
   if (missing.length > 0) {
     const msg = `Refusing to start: missing required environment variable(s) in production: ${missing.join(", ")}`;
@@ -193,127 +173,12 @@ if (IS_PROD) {
     console.error("ADMIN_PASSWORD must be at least 8 characters.");
     process.exit(1);
   }
+  if (!supabaseConfigured()) {
+    console.warn("Warning: SUPABASE_URL or SUPABASE_SECRET_KEY is not set. Database operations will fail.");
+  }
 }
 
 const SESSION_SECRET = process.env.SESSION_SECRET || "dev-insecure-session-secret-local-only";
-
-fs.mkdirSync(DATA_DIR, { recursive: true });
-fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-
-// Vercel instances start with an empty database unless DB_PATH points to a persistent database.
-const db = new DatabaseSync(DB_PATH);
-db.exec("PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;");
-
-db.exec(`
-  CREATE TABLE IF NOT EXISTS media (
-    id TEXT PRIMARY KEY,
-    file_name TEXT NOT NULL,
-    file_url TEXT NOT NULL UNIQUE,
-    mime_type TEXT NOT NULL,
-    alt_text TEXT NOT NULL DEFAULT '',
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    ai_metadata TEXT
-  );
-  CREATE TABLE IF NOT EXISTS sections (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    title TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    slug TEXT NOT NULL UNIQUE,
-    is_visible INTEGER NOT NULL DEFAULT 1,
-    display_order INTEGER NOT NULL DEFAULT 0,
-    is_system INTEGER NOT NULL DEFAULT 0
-  );
-  CREATE TABLE IF NOT EXISTS portfolio_items (
-    id TEXT PRIMARY KEY,
-    media_id TEXT NOT NULL REFERENCES media(id) ON DELETE RESTRICT,
-    title TEXT NOT NULL,
-    description TEXT NOT NULL DEFAULT '',
-    category TEXT NOT NULL DEFAULT '',
-    location TEXT NOT NULL DEFAULT '',
-    photo_date TEXT NOT NULL DEFAULT '',
-    tags TEXT NOT NULL DEFAULT '',
-    is_featured INTEGER NOT NULL DEFAULT 0,
-    is_published INTEGER NOT NULL DEFAULT 0,
-    display_order INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  );
-  CREATE TABLE IF NOT EXISTS portfolio_item_sections (
-    portfolio_item_id TEXT NOT NULL REFERENCES portfolio_items(id) ON DELETE CASCADE,
-    section_id TEXT NOT NULL REFERENCES sections(id) ON DELETE CASCADE,
-    PRIMARY KEY (portfolio_item_id, section_id)
-  );
-  CREATE TABLE IF NOT EXISTS social_links (
-    id TEXT PRIMARY KEY,
-    platform TEXT NOT NULL,
-    display_name TEXT NOT NULL,
-    url TEXT NOT NULL,
-    icon TEXT NOT NULL,
-    is_visible INTEGER NOT NULL DEFAULT 1,
-    display_order INTEGER NOT NULL DEFAULT 0
-  );
-  CREATE TABLE IF NOT EXISTS social_link_locations (
-    social_link_id TEXT NOT NULL REFERENCES social_links(id) ON DELETE CASCADE,
-    location TEXT NOT NULL,
-    display_order INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (social_link_id, location)
-  );
-  CREATE TABLE IF NOT EXISTS site_content (
-    content_key TEXT PRIMARY KEY,
-    content_value TEXT NOT NULL,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  );
-  CREATE TABLE IF NOT EXISTS navigation_items (
-    id TEXT PRIMARY KEY,
-    label TEXT NOT NULL,
-    url TEXT NOT NULL,
-    icon TEXT NOT NULL DEFAULT '',
-    is_visible INTEGER NOT NULL DEFAULT 1,
-    display_order INTEGER NOT NULL DEFAULT 0
-  );
-  CREATE TABLE IF NOT EXISTS skills (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    percent INTEGER NOT NULL DEFAULT 80,
-    icon TEXT NOT NULL DEFAULT 'ri-star-line',
-    display_order INTEGER NOT NULL DEFAULT 0,
-    is_visible INTEGER NOT NULL DEFAULT 1
-  );
-  CREATE INDEX IF NOT EXISTS portfolio_published_order
-    ON portfolio_items (is_published, display_order);
-  CREATE INDEX IF NOT EXISTS portfolio_sections_section
-    ON portfolio_item_sections (section_id);
-  CREATE INDEX IF NOT EXISTS social_locations
-    ON social_link_locations (location);
-`);
-
-const portfolioColumns = db.prepare("PRAGMA table_info(portfolio_items)").all();
-if (!portfolioColumns.some((column) => column.name === "is_hidden")) {
-  db.exec("ALTER TABLE portfolio_items ADD COLUMN is_hidden INTEGER NOT NULL DEFAULT 0");
-}
-
-const mediaColumns = db.prepare("PRAGMA table_info(media)").all();
-if (!mediaColumns.some((column) => column.name === "ai_metadata")) {
-  db.exec("ALTER TABLE media ADD COLUMN ai_metadata TEXT");
-}
-
-// The database is intentionally content-empty on first startup.
-// Only the built-in display locations required by the public site are initialized.
-const systemSectionsCount = db.prepare("SELECT COUNT(*) AS count FROM sections WHERE is_system = 1").get();
-if (systemSectionsCount.count === 0) {
-  const insertSystemSection = db.prepare(
-    "INSERT OR IGNORE INTO sections (id, name, title, description, slug, display_order, is_system) VALUES (?, ?, ?, '', ?, ?, 1)",
-  );
-  [
-    ["home", "Homepage", "Homepage", "homepage", 0],
-    ["portfolio", "Portfolio", "Portfolio", "portfolio", 1],
-    ["gallery", "Gallery", "Gallery", "gallery", 2],
-    ["featured", "Featured", "Featured", "featured", 3],
-    ["about", "About", "About", "about", 4],
-    ["contact", "Contact", "Contact", "contact", 5],
-  ].forEach((section) => insertSystemSection.run(...section));
-}
 
 const loginAttempts = new Map();
 const aiAnalysisCooldowns = new Map();
@@ -330,6 +195,7 @@ const MIME_BY_EXTENSION = new Map([
   [".ico", "image/x-icon"],
 ]);
 
+// ── HTTP helpers ──────────────────────────────────────────────────────────────
 function sendJson(res, status, payload, headers = {}) {
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
@@ -408,6 +274,7 @@ function parseMultipart(buffer, contentType) {
   return { fields, files };
 }
 
+// ── Data serializers ──────────────────────────────────────────────────────────
 function serializePortfolioItem(row) {
   return {
     id: row.id,
@@ -422,53 +289,78 @@ function serializePortfolioItem(row) {
     category: row.category,
     location: row.location,
     photoDate: row.photo_date,
-    tags: row.tags ? row.tags.split(",").map((tag) => tag.trim()).filter(Boolean) : [],
+    tags: row.tags
+      ? (Array.isArray(row.tags) ? row.tags : row.tags.split(",").map((t) => t.trim())).filter(Boolean)
+      : [],
     featured: Boolean(row.is_featured),
     published: Boolean(row.is_published),
     hidden: Boolean(row.is_hidden),
     displayOrder: row.display_order,
-    sections: row.sections ? row.sections.split(",") : [],
+    sections: row.sections
+      ? (Array.isArray(row.sections) ? row.sections : row.sections.split(",")).filter(Boolean)
+      : [],
   };
 }
 
-const portfolioSelect = `
-  SELECT p.*, m.file_name, m.file_url, m.mime_type, m.alt_text, m.ai_metadata,
-    GROUP_CONCAT(s.slug) AS sections
-  FROM portfolio_items p
-  JOIN media m ON m.id = p.media_id
-  LEFT JOIN portfolio_item_sections ps ON ps.portfolio_item_id = p.id
-  LEFT JOIN sections s ON s.id = ps.section_id
-`;
-
-function getPortfolioItem(id) {
-  const row = db.prepare(`${portfolioSelect} WHERE p.id = ? GROUP BY p.id`).get(id);
-  return row ? serializePortfolioItem(row) : null;
+// ── Database read functions ───────────────────────────────────────────────────
+async function getPortfolioItems({ publicOnly = false } = {}) {
+  let query = "select=*,media(id,file_name,file_url,mime_type,alt_text,ai_metadata),portfolio_item_sections(section_id,sections(slug))&order=display_order,created_at";
+  if (publicOnly) query += "&is_published=eq.true&is_hidden=eq.false";
+  const rows = await sbSelect("portfolio_items", query);
+  return rows.map((row) => {
+    const media = row.media || {};
+    const sections = (row.portfolio_item_sections || [])
+      .map((pis) => pis.sections?.slug)
+      .filter(Boolean);
+    return serializePortfolioItem({
+      ...row,
+      file_url: media.file_url,
+      file_name: media.file_name,
+      mime_type: media.mime_type,
+      alt_text: media.alt_text,
+      ai_metadata: media.ai_metadata,
+      sections: sections.join(","),
+    });
+  });
 }
 
-function getPortfolioItems({ publicOnly = false } = {}) {
-  const where = publicOnly ? "WHERE p.is_published = 1 AND p.is_hidden = 0" : "";
-  return db.prepare(`${portfolioSelect} ${where} GROUP BY p.id ORDER BY p.display_order, p.created_at`).all()
-    .map(serializePortfolioItem);
+async function getPortfolioItem(id) {
+  const rows = await sbSelect(
+    "portfolio_items",
+    `select=*,media(id,file_name,file_url,mime_type,alt_text,ai_metadata),portfolio_item_sections(section_id,sections(slug))&id=eq.${encodeURIComponent(id)}`,
+  );
+  if (!rows.length) return null;
+  const row = rows[0];
+  const media = row.media || {};
+  const sections = (row.portfolio_item_sections || [])
+    .map((pis) => pis.sections?.slug)
+    .filter(Boolean);
+  return serializePortfolioItem({
+    ...row,
+    file_url: media.file_url,
+    file_name: media.file_name,
+    mime_type: media.mime_type,
+    alt_text: media.alt_text,
+    ai_metadata: media.ai_metadata,
+    sections: sections.join(","),
+  });
 }
 
-function getSections() {
-  return db.prepare("SELECT * FROM sections ORDER BY display_order, name")
-    .all()
-    .map((section) => ({
-      ...section,
-      visible: Boolean(section.is_visible),
-      system: Boolean(section.is_system),
-    }));
+async function getSections() {
+  const rows = await sbSelect("sections", "order=display_order,name");
+  return rows.map((s) => ({
+    ...s,
+    visible: Boolean(s.is_visible),
+    system: Boolean(s.is_system),
+  }));
 }
 
-function getSocialLinks() {
-  return db.prepare(`
-    SELECT sl.*, GROUP_CONCAT(sll.location) AS locations
-    FROM social_links sl
-    LEFT JOIN social_link_locations sll ON sll.social_link_id = sl.id
-    GROUP BY sl.id
-    ORDER BY sl.display_order, sl.display_name
-  `).all().map((link) => ({
+async function getSocialLinks() {
+  const rows = await sbSelect(
+    "social_links",
+    "select=*,social_link_locations(location,display_order)&order=display_order,display_name",
+  );
+  return rows.map((link) => ({
     id: link.id,
     platform: link.platform,
     displayName: link.display_name,
@@ -476,37 +368,98 @@ function getSocialLinks() {
     icon: link.icon,
     visible: Boolean(link.is_visible),
     displayOrder: link.display_order,
-    locations: link.locations ? link.locations.split(",") : [],
+    locations: (link.social_link_locations || [])
+      .sort((a, b) => a.display_order - b.display_order)
+      .map((l) => l.location),
   }));
 }
 
-function getNavigation() {
-  return db.prepare("SELECT id, label, url, icon, is_visible AS visible, display_order AS displayOrder FROM navigation_items ORDER BY display_order, label")
-    .all()
-    .map((item) => ({ ...item, visible: Boolean(item.visible) }));
+async function getNavigation() {
+  const rows = await sbSelect("navigation_items", "order=display_order,label");
+  return rows.map((item) => ({
+    id: item.id,
+    label: item.label,
+    url: item.url,
+    icon: item.icon,
+    visible: Boolean(item.is_visible),
+    displayOrder: item.display_order,
+  }));
 }
 
-function getContent() {
-  return Object.fromEntries(
-    db.prepare("SELECT content_key, content_value FROM site_content").all()
-      .map((row) => [row.content_key, row.content_value]),
+async function getContent() {
+  const rows = await sbSelect("site_content", "select=content_key,content_value");
+  return Object.fromEntries(rows.map((r) => [r.content_key, r.content_value]));
+}
+
+async function getSkills({ visibleOnly = false } = {}) {
+  const filter = visibleOnly ? "&is_visible=eq.true" : "";
+  const rows = await sbSelect("skills", `order=display_order,name${filter}`);
+  return rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    percent: r.percent,
+    icon: r.icon,
+    displayOrder: r.display_order,
+    visible: Boolean(r.is_visible),
+  }));
+}
+
+async function getMediaItem(id) {
+  const rows = await sbSelect("media", `id=eq.${encodeURIComponent(id)}`);
+  return rows[0] || null;
+}
+
+async function mediaUsage(mediaId) {
+  const rows = await sbSelect(
+    "portfolio_items",
+    `select=id,title,is_published,portfolio_item_sections(sections(slug))&media_id=eq.${encodeURIComponent(mediaId)}&order=display_order`,
+  );
+  return rows.map((p) => ({
+    id: p.id,
+    title: p.title,
+    is_published: p.is_published,
+    slug: (p.portfolio_item_sections || [])[0]?.sections?.slug || null,
+  }));
+}
+
+// ── Section location helpers ──────────────────────────────────────────────────
+async function parseLocations(body) {
+  const selected = Array.isArray(body.sections) ? body.sections : [];
+  const allSections = await getSections();
+  const known = new Set(allSections.map((s) => s.slug));
+  const unique = [...new Set(selected.map(String))];
+  if (unique.some((slug) => !known.has(slug))) {
+    throw Object.assign(new Error("One or more selected display locations do not exist."), { status: 400 });
+  }
+  return unique;
+}
+
+async function saveLocations(itemId, slugs) {
+  await sbDelete("portfolio_item_sections", `portfolio_item_id=eq.${encodeURIComponent(itemId)}`);
+  if (!slugs.length) return;
+  const sections = await sbSelect("sections", `slug=in.(${slugs.map(encodeURIComponent).join(",")})&select=id,slug`);
+  const sectionMap = Object.fromEntries(sections.map((s) => [s.slug, s.id]));
+  const toInsert = slugs
+    .map((slug) => ({ portfolio_item_id: itemId, section_id: sectionMap[slug] }))
+    .filter((r) => r.section_id);
+  if (toInsert.length) await sbInsert("portfolio_item_sections", toInsert, { returning: "minimal" });
+}
+
+async function assignSocialLocations(linkId, locations) {
+  const allowed = new Set(["header", "homepage", "about", "portfolio", "contact", "footer"]);
+  if (locations.some((l) => !allowed.has(l))) {
+    throw Object.assign(new Error("Unknown social display location."), { status: 400 });
+  }
+  await sbDelete("social_link_locations", `social_link_id=eq.${encodeURIComponent(linkId)}`);
+  if (!locations.length) return;
+  await sbInsert(
+    "social_link_locations",
+    locations.map((loc, i) => ({ social_link_id: linkId, location: loc, display_order: i })),
+    { returning: "minimal" },
   );
 }
 
-function getSkills({ visibleOnly = false } = {}) {
-  const where = visibleOnly ? "WHERE is_visible = 1" : "";
-  return db.prepare(`SELECT * FROM skills ${where} ORDER BY display_order, name`)
-    .all()
-    .map((row) => ({
-      id: row.id,
-      name: row.name,
-      percent: row.percent,
-      icon: row.icon,
-      displayOrder: row.display_order,
-      visible: Boolean(row.is_visible),
-    }));
-}
-
+// ── Session / Auth ────────────────────────────────────────────────────────────
 function createSessionToken(username) {
   const expiresAt = Date.now() + SESSION_TTL;
   const payload = Buffer.from(JSON.stringify({ u: username, exp: expiresAt }), "utf8").toString("base64url");
@@ -521,18 +474,13 @@ function verifySessionToken(token) {
   const payloadB64 = token.slice(0, dotIndex);
   const signature = token.slice(dotIndex + 1);
   if (!payloadB64 || !signature) return null;
-
   const expectedSignature = crypto
     .createHmac("sha256", SESSION_SECRET)
     .update(payloadB64)
     .digest("base64url");
-
   const sigBuf = Buffer.from(signature, "utf8");
   const expBuf = Buffer.from(expectedSignature, "utf8");
-  if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
-    return null;
-  }
-
+  if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) return null;
   try {
     const data = JSON.parse(Buffer.from(payloadB64, "base64url").toString("utf8"));
     if (!data || typeof data !== "object") return null;
@@ -548,16 +496,8 @@ function getSession(req) {
   const cookie = req.headers.cookie || "";
   const rawToken = cookie.match(new RegExp(`(?:^|;\\s*)${SESSION_COOKIE}=([^;]+)`))?.[1];
   if (!rawToken) return null;
-
   let token;
-  try {
-    token = decodeURIComponent(rawToken);
-  } catch {
-    // A malformed/stale cookie should behave like an unauthenticated session,
-    // not crash the API request with HTTP 500.
-    return null;
-  }
-
+  try { token = decodeURIComponent(rawToken); } catch { return null; }
   const verified = verifySessionToken(token);
   if (!verified) return null;
   const key = crypto.createHash("sha256").update(token).digest("hex");
@@ -573,9 +513,7 @@ function requireAdmin(req, res) {
 }
 
 function isSecureRequest(req) {
-  if (IS_VERCEL) {
-    return req.headers["x-forwarded-proto"]?.split(",")[0].trim() === "https";
-  }
+  if (IS_VERCEL) return req.headers["x-forwarded-proto"]?.split(",")[0].trim() === "https";
   return Boolean(req.socket.encrypted);
 }
 
@@ -583,11 +521,9 @@ function checkOrigin(req, res) {
   const origin = req.headers.origin;
   if (origin) {
     const forwardedProto = IS_VERCEL && req.headers["x-forwarded-proto"]
-      ? req.headers["x-forwarded-proto"].split(",")[0].trim()
-      : "";
+      ? req.headers["x-forwarded-proto"].split(",")[0].trim() : "";
     const forwardedHost = IS_VERCEL && req.headers["x-forwarded-host"]
-      ? req.headers["x-forwarded-host"].split(",")[0].trim()
-      : "";
+      ? req.headers["x-forwarded-host"].split(",")[0].trim() : "";
     const scheme = forwardedProto || (isSecureRequest(req) ? "https" : "http");
     const host = forwardedHost || req.headers.host;
     let matchesOrigin = false;
@@ -596,27 +532,14 @@ function checkOrigin(req, res) {
       const expectedOrigin = new URL(`${scheme}://${host}`);
       matchesOrigin = parsedOrigin.origin === expectedOrigin.origin
         && parsedOrigin.pathname === "/"
-        && !parsedOrigin.search
-        && !parsedOrigin.hash;
-    } catch {
-      matchesOrigin = false;
-    }
+        && !parsedOrigin.search && !parsedOrigin.hash;
+    } catch { matchesOrigin = false; }
     if (!matchesOrigin) {
       sendJson(res, 403, { error: "Cross-origin write requests are not allowed." });
       return false;
     }
   }
   return true;
-}
-
-function parseLocations(body) {
-  const selected = Array.isArray(body.sections) ? body.sections : [];
-  const known = new Set(getSections().map((section) => section.slug));
-  const unique = [...new Set(selected.map(String))];
-  if (unique.some((slug) => !known.has(slug))) {
-    throw Object.assign(new Error("One or more selected display locations do not exist."), { status: 400 });
-  }
-  return unique;
 }
 
 function validateExternalUrl(value, schemes = ["https:"]) {
@@ -629,46 +552,500 @@ function validateExternalUrl(value, schemes = ["https:"]) {
   }
 }
 
-function saveLocations(itemId, locations) {
-  db.prepare("DELETE FROM portfolio_item_sections WHERE portfolio_item_id = ?").run(itemId);
-  const add = db.prepare("INSERT INTO portfolio_item_sections (portfolio_item_id, section_id) VALUES (?, ?)");
-  for (const slug of locations) {
-    const section = db.prepare("SELECT id FROM sections WHERE slug = ?").get(slug);
-    add.run(itemId, section.id);
+function boolValue(value) {
+  return value === true || value === "true" || value === "1" || value === 1;
+}
+
+function normalizeSlug(value) {
+  return String(value || "").trim().toLowerCase()
+    .normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+function isValidImage(data, type) {
+  if (!data || data.length < 12) return false;
+  let normType = (type || "").split(";")[0].trim().toLowerCase();
+  if (normType === "image/jpg" || normType === "image/pjpeg") normType = "image/jpeg";
+  if (normType === "image/jpeg") return data[0] === 0xff && data[1] === 0xd8;
+  if (normType === "image/png") return data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
+  if (normType === "image/webp") return data.toString("ascii", 0, 4) === "RIFF" && data.toString("ascii", 8, 12) === "WEBP";
+  if (normType === "image/avif") return data.toString("ascii", 4, 8) === "ftyp" && data.subarray(8, 128).toString("ascii").includes("avif");
+  return false;
+}
+
+// ── Media cleanup ─────────────────────────────────────────────────────────────
+async function cleanupUnusedMedia(mediaId) {
+  const media = await getMediaItem(mediaId);
+  if (!media) return;
+  const rows = await sbSelect("portfolio_items", `media_id=eq.${encodeURIComponent(mediaId)}&select=id&limit=1`);
+  if (rows.length === 0) {
+    await sbDelete("media", `id=eq.${encodeURIComponent(mediaId)}`);
+    const storagePath = storagePathFromUrl(media.file_url);
+    if (storagePath) await storageDelete(storagePath);
   }
 }
 
-function assignSocialLocations(linkId, locations) {
-  const allowed = new Set(["header", "homepage", "about", "portfolio", "contact", "footer"]);
-  if (locations.some((location) => !allowed.has(location))) {
-    throw Object.assign(new Error("Unknown social display location."), { status: 400 });
+// ── Ensure system sections exist ──────────────────────────────────────────────
+async function ensureSystemSections() {
+  try {
+    const existing = await sbSelect("sections", "is_system=eq.true&select=id");
+    if (existing.length > 0) return;
+    await sbInsert("sections", [
+      { id: "home", name: "Homepage", title: "Homepage", description: "", slug: "homepage", display_order: 0, is_system: true, is_visible: true },
+      { id: "portfolio", name: "Portfolio", title: "Portfolio", description: "", slug: "portfolio", display_order: 1, is_system: true, is_visible: true },
+      { id: "gallery", name: "Gallery", title: "Gallery", description: "", slug: "gallery", display_order: 2, is_system: true, is_visible: true },
+      { id: "featured", name: "Featured", title: "Featured", description: "", slug: "featured", display_order: 3, is_system: true, is_visible: true },
+      { id: "about", name: "About", title: "About", description: "", slug: "about", display_order: 4, is_system: true, is_visible: true },
+      { id: "contact", name: "Contact", title: "Contact", description: "", slug: "contact", display_order: 5, is_system: true, is_visible: true },
+    ], { onConflict: "id", returning: "minimal" });
+  } catch (e) {
+    console.error("ensureSystemSections error:", e.message);
   }
-  db.prepare("DELETE FROM social_link_locations WHERE social_link_id = ?").run(linkId);
-  const add = db.prepare("INSERT INTO social_link_locations (social_link_id, location, display_order) VALUES (?, ?, ?)");
-  locations.forEach((location, index) => add.run(linkId, location, index));
 }
 
-function mediaUsage(mediaId) {
-  const rows = db.prepare(`
-    SELECT p.id, p.title, p.is_published, s.slug
-    FROM portfolio_items p
-    LEFT JOIN portfolio_item_sections ps ON ps.portfolio_item_id = p.id
-    LEFT JOIN sections s ON s.id = ps.section_id
-    WHERE p.media_id = ?
-    ORDER BY p.display_order
-  `).all(mediaId);
-  return rows;
+// ── Skill write ───────────────────────────────────────────────────────────────
+async function handleSkillWrite(req, res, id) {
+  try {
+    const body = await readJson(req);
+    const name = String(body.name || "").trim();
+    if (!name || name.length > 60) return sendJson(res, 400, { error: "Skill name must be 1-60 characters." });
+    const rawPercent = body.percent ?? 80;
+    if (typeof rawPercent === "number" && !Number.isInteger(rawPercent))
+      return sendJson(res, 400, { error: "Percent must be an integer from 0 to 100." });
+    const percent = Number(String(rawPercent).trim());
+    if (!Number.isInteger(percent) || isNaN(percent) || percent < 0 || percent > 100)
+      return sendJson(res, 400, { error: "Percent must be an integer from 0 to 100." });
+    const icon = String(body.icon || "ri-star-line").trim();
+    if (!/^ri-[a-z0-9-]+$/.test(icon))
+      return sendJson(res, 400, { error: "Icon must match the pattern ri-<name> (e.g. ri-camera-line)." });
+    const displayOrder = parseInt(body.displayOrder ?? 0, 10);
+    const isVisible = boolValue(body.visible);
+    if (id) {
+      const existing = await sbSelect("skills", `id=eq.${encodeURIComponent(id)}&select=id`);
+      if (!existing.length) return sendJson(res, 404, { error: "Skill not found." });
+      await sbUpdate("skills", `id=eq.${encodeURIComponent(id)}`, { name, percent, icon, display_order: displayOrder, is_visible: isVisible });
+    } else {
+      const newId = crypto.randomUUID();
+      await sbInsert("skills", { id: newId, name, percent, icon, display_order: displayOrder, is_visible: isVisible }, { returning: "minimal" });
+    }
+    return sendJson(res, 200, await getSkills());
+  } catch (error) {
+    return sendJson(res, error.status || 500, { error: error.status ? error.message : "Could not save skill." });
+  }
 }
 
-function deleteOwnedFile(fileUrl) {
-  if (!fileUrl.startsWith("/uploads/")) return;
-  const fileName = path.basename(decodeURIComponent(fileUrl));
-  const filePath = path.join(UPLOAD_DIR, fileName);
-  if (path.dirname(filePath) === UPLOAD_DIR) fs.rmSync(filePath, { force: true });
+// ── Portfolio write ───────────────────────────────────────────────────────────
+async function handlePortfolioWrite(req, res, id) {
+  try {
+    const contentType = req.headers["content-type"] || "";
+    let body;
+    let imageFile = null;
+    if (contentType.toLowerCase().startsWith("multipart/form-data")) {
+      const parsed = parseMultipart(await readBody(req), contentType);
+      body = parsed.fields;
+      imageFile = parsed.files.find((f) => f.name === "photo") || null;
+    } else {
+      body = await readJson(req);
+    }
+
+    const existingItems = id ? await sbSelect("portfolio_items", `id=eq.${encodeURIComponent(id)}`) : [];
+    const existing = existingItems[0] || null;
+    if (id && !existing) return sendJson(res, 404, { error: "Portfolio item not found." });
+    if (!existing && !imageFile) return sendJson(res, 400, { error: "Choose an image file to upload." });
+
+    if (imageFile) {
+      let mimeType = (imageFile.type || "").split(";")[0].trim().toLowerCase();
+      if (mimeType === "image/jpg" || mimeType === "image/pjpeg") mimeType = "image/jpeg";
+      imageFile.type = mimeType;
+      if (!ALLOWED_IMAGE_TYPES.has(imageFile.type)) return sendJson(res, 415, { error: "Use a JPEG, PNG, WebP, or AVIF image." });
+      if (imageFile.data.length > MAX_UPLOAD_BYTES) return sendJson(res, 413, { error: "Image exceeds the 12 MB limit." });
+      if (imageFile.data.length < 12 || !isValidImage(imageFile.data, imageFile.type))
+        return sendJson(res, 415, { error: "The uploaded file does not match its image type." });
+    }
+
+    const title = String(body.title || "").trim();
+    if (!title) return sendJson(res, 400, { error: "Photo title is required." });
+
+    const sections = new Set(await parseLocations(body));
+    if (boolValue(body.featured)) sections.add("featured");
+    else sections.delete("featured");
+
+    const category = String(body.category || "").trim();
+    if (category) {
+      const catSection = await sbSelect("sections", `slug=eq.${encodeURIComponent(category)}&is_system=eq.false&select=id`);
+      if (catSection.length) sections.add(category);
+    }
+    const oldCategory = existing?.category;
+    if (oldCategory && oldCategory !== category && !sections.has(oldCategory)) sections.delete(oldCategory);
+
+    let newMediaId = existing?.media_id || null;
+    let newFileUrl = null;
+    if (imageFile) {
+      newMediaId = crypto.randomUUID();
+      const extension = ALLOWED_IMAGE_TYPES.get(imageFile.type);
+      const storageName = `${crypto.randomUUID()}${extension}`;
+      newFileUrl = await storageUpload(storageName, imageFile.data, imageFile.type);
+      await sbInsert("media", {
+        id: newMediaId,
+        file_name: imageFile.filename,
+        file_url: newFileUrl,
+        mime_type: imageFile.type,
+        alt_text: String(body.description || "").trim(),
+      }, { returning: "minimal" });
+    }
+
+    const itemId = existing?.id || crypto.randomUUID();
+    const order = Number.isFinite(Number(body.displayOrder)) ? Math.max(0, Number(body.displayOrder)) : 0;
+    const tagsValue = Array.isArray(body.tags) ? body.tags.join(",") : String(body.tags || "").trim();
+
+    try {
+      if (existing) {
+        await sbUpdate("portfolio_items", `id=eq.${encodeURIComponent(itemId)}`, {
+          media_id: newMediaId, title,
+          description: String(body.description || "").trim(),
+          category: String(body.category || "").trim(),
+          location: String(body.location || "").trim(),
+          photo_date: String(body.photoDate || "").trim(),
+          tags: tagsValue,
+          is_featured: boolValue(body.featured),
+          is_published: boolValue(body.published),
+          is_hidden: boolValue(body.hidden),
+          display_order: order,
+        });
+      } else {
+        await sbInsert("portfolio_items", {
+          id: itemId, media_id: newMediaId, title,
+          description: String(body.description || "").trim(),
+          category: String(body.category || "").trim(),
+          location: String(body.location || "").trim(),
+          photo_date: String(body.photoDate || "").trim(),
+          tags: tagsValue,
+          is_featured: boolValue(body.featured),
+          is_published: boolValue(body.published),
+          is_hidden: boolValue(body.hidden),
+          display_order: order,
+        }, { returning: "minimal" });
+      }
+
+      await saveLocations(itemId, [...sections]);
+
+      if (newMediaId) {
+        const altText = typeof body.altText === "string" ? body.altText.trim()
+          : (typeof body.alt_text === "string" ? body.alt_text.trim() : undefined);
+        let aiMetaStr = undefined;
+        if (body.aiMetadata) {
+          try {
+            const rawObj = typeof body.aiMetadata === "string" ? JSON.parse(body.aiMetadata) : body.aiMetadata;
+            aiMetaStr = JSON.stringify({
+              subject: String(rawObj.subject || "").trim(),
+              scene: String(rawObj.scene || "").trim(),
+              mood: String(rawObj.mood || "").trim(),
+              lighting: String(rawObj.lighting || "").trim(),
+              composition: String(rawObj.composition || "").trim(),
+              style: String(rawObj.style || "").trim(),
+              analyzedAt: rawObj.analyzedAt || new Date().toISOString(),
+            });
+          } catch {}
+        }
+        const mediaUpdate = {};
+        if (altText !== undefined) mediaUpdate.alt_text = altText;
+        if (aiMetaStr !== undefined) mediaUpdate.ai_metadata = aiMetaStr;
+        if (Object.keys(mediaUpdate).length) {
+          await sbUpdate("media", `id=eq.${encodeURIComponent(newMediaId)}`, mediaUpdate);
+        }
+      }
+    } catch (error) {
+      if (newFileUrl && !existing) {
+        const sp = storagePathFromUrl(newFileUrl);
+        if (sp) await storageDelete(sp).catch(() => {});
+        await sbDelete("media", `id=eq.${encodeURIComponent(newMediaId)}`).catch(() => {});
+      }
+      throw error;
+    }
+
+    if (existing && imageFile && existing.media_id !== newMediaId) {
+      await cleanupUnusedMedia(existing.media_id);
+    }
+    return sendJson(res, existing ? 200 : 201, await getPortfolioItem(itemId));
+  } catch (error) {
+    return sendJson(res, error.status || 500, { error: error.status ? error.message : "Could not save portfolio item." });
+  }
 }
 
+async function handlePortfolioDelete(res, id) {
+  try {
+    const rows = await sbSelect("portfolio_items", `id=eq.${encodeURIComponent(id)}&select=media_id`);
+    if (!rows.length) return sendJson(res, 404, { error: "Portfolio item not found." });
+    const mediaId = rows[0].media_id;
+    await sbDelete("portfolio_items", `id=eq.${encodeURIComponent(id)}`);
+    await cleanupUnusedMedia(mediaId);
+    return sendJson(res, 200, { deleted: true });
+  } catch (error) {
+    return sendJson(res, 500, { error: "Could not delete portfolio item." });
+  }
+}
+
+async function handleSectionWrite(req, res, id) {
+  try {
+    const body = await readJson(req);
+    const existingArr = id ? await sbSelect("sections", `id=eq.${encodeURIComponent(id)}`) : [];
+    const existing = existingArr[0] || null;
+    if (id && !existing) return sendJson(res, 404, { error: "Section not found." });
+    if (existing?.is_system) return sendJson(res, 403, { error: "Built-in display locations cannot be renamed." });
+    const name = String(body.name || "").trim();
+    const slug = normalizeSlug(body.slug || name);
+    if (!name || !slug) return sendJson(res, 400, { error: "Section name and a valid slug are required." });
+    if (RESERVED_SLUGS.has(slug)) return sendJson(res, 400, { error: "That slug is reserved for a site display location." });
+    const order = Math.max(0, Number(body.displayOrder) || 0);
+    if (existing) {
+      await sbUpdate("sections", `id=eq.${encodeURIComponent(id)}`, {
+        name, title: String(body.title || name), description: String(body.description || ""),
+        slug, is_visible: boolValue(body.visible), display_order: order,
+      });
+    } else {
+      const sectionId = crypto.randomUUID();
+      await sbInsert("sections", {
+        id: sectionId, name, title: String(body.title || name),
+        description: String(body.description || ""), slug,
+        is_visible: boolValue(body.visible ?? true), display_order: order, is_system: false,
+      }, { returning: "minimal" });
+      id = sectionId;
+    }
+    const allSections = await getSections();
+    return sendJson(res, existing ? 200 : 201, allSections.find((s) => s.id === id));
+  } catch (error) {
+    console.error("Could not save section:", error);
+    const conflict = String(error.message).includes("duplicate") || String(error.message).includes("unique");
+    return sendJson(res, conflict ? 409 : error.status || 500,
+      { error: conflict ? "That section slug already exists." : error.status ? error.message : "Could not save section." });
+  }
+}
+
+async function handleSectionDelete(res, id) {
+  try {
+    const rows = await sbSelect("sections", `id=eq.${encodeURIComponent(id)}`);
+    if (!rows.length) return sendJson(res, 404, { error: "Section not found." });
+    if (rows[0].is_system) return sendJson(res, 403, { error: "Built-in display locations cannot be deleted." });
+    await sbDelete("sections", `id=eq.${encodeURIComponent(id)}`);
+    return sendJson(res, 200, { deleted: true });
+  } catch (error) {
+    return sendJson(res, 500, { error: "Could not delete section." });
+  }
+}
+
+async function handleContentWrite(req, res) {
+  try {
+    const body = await readJson(req);
+    const entries = Object.entries(body);
+    for (const [key, value] of entries) {
+      if (typeof value !== "string" || key.length > 120 || value.length > 10000)
+        throw Object.assign(new Error(`Invalid content value for ${key}.`), { status: 400 });
+    }
+    const rows = entries.map(([key, value]) => ({
+      content_key: key, content_value: value, updated_at: new Date().toISOString(),
+    }));
+    await sbUpsert("site_content", rows, "content_key");
+    return sendJson(res, 200, await getContent());
+  } catch (error) {
+    return sendJson(res, error.status || 500, { error: error.status ? error.message : "Could not save site content." });
+  }
+}
+
+async function handleSocialWrite(req, res, id) {
+  try {
+    const body = await readJson(req);
+    const existingArr = id ? await sbSelect("social_links", `id=eq.${encodeURIComponent(id)}&select=id`) : [];
+    const existing = existingArr[0] || null;
+    if (id && !existing) return sendJson(res, 404, { error: "Social link not found." });
+    const platform = String(body.platform || "").trim();
+    const displayName = String(body.displayName || "").trim();
+    const url = validateExternalUrl(body.url, ["https:", "mailto:", "tel:"]);
+    const icon = String(body.icon || "").trim();
+    if (!platform || !displayName || !icon) return sendJson(res, 400, { error: "Platform, display name, and icon are required." });
+    const locations = Array.isArray(body.locations) ? [...new Set(body.locations)] : [];
+    const linkId = existing?.id || crypto.randomUUID();
+    if (existing) {
+      await sbUpdate("social_links", `id=eq.${encodeURIComponent(linkId)}`, {
+        platform, display_name: displayName, url, icon,
+        is_visible: boolValue(body.visible),
+        display_order: Math.max(0, Number(body.displayOrder) || 0),
+      });
+    } else {
+      await sbInsert("social_links", {
+        id: linkId, platform, display_name: displayName, url, icon,
+        is_visible: boolValue(body.visible ?? true),
+        display_order: Math.max(0, Number(body.displayOrder) || 0),
+      }, { returning: "minimal" });
+    }
+    await assignSocialLocations(linkId, locations);
+    const allLinks = await getSocialLinks();
+    return sendJson(res, existing ? 200 : 201, allLinks.find((l) => l.id === linkId));
+  } catch (error) {
+    return sendJson(res, error.status || 500, { error: error.status ? error.message : "Could not save social link." });
+  }
+}
+
+async function handleNavigationWrite(req, res, id) {
+  try {
+    const body = await readJson(req);
+    const existingArr = id ? await sbSelect("navigation_items", `id=eq.${encodeURIComponent(id)}&select=id`) : [];
+    const existing = existingArr[0] || null;
+    if (id && !existing) return sendJson(res, 404, { error: "Navigation item not found." });
+    const label = String(body.label || "").trim();
+    const destination = String(body.url || "").trim();
+    if (!label || !destination || destination.startsWith("//") || /[\r\n]/.test(destination))
+      return sendJson(res, 400, { error: "Navigation label and a safe URL are required." });
+    if (/^(javascript|data|vbscript):/i.test(destination))
+      return sendJson(res, 400, { error: "That navigation URL scheme is not allowed." });
+    const itemId = existing?.id || crypto.randomUUID();
+    if (existing) {
+      await sbUpdate("navigation_items", `id=eq.${encodeURIComponent(itemId)}`, {
+        label, url: destination, icon: String(body.icon || ""),
+        is_visible: boolValue(body.visible ?? true),
+        display_order: Math.max(0, Number(body.displayOrder) || 0),
+      });
+    } else {
+      await sbInsert("navigation_items", {
+        id: itemId, label, url: destination, icon: String(body.icon || ""),
+        is_visible: boolValue(body.visible ?? true),
+        display_order: Math.max(0, Number(body.displayOrder) || 0),
+      }, { returning: "minimal" });
+    }
+    const allNav = await getNavigation();
+    return sendJson(res, existing ? 200 : 201, allNav.find((item) => item.id === itemId));
+  } catch (error) {
+    return sendJson(res, error.status || 500, { error: error.status ? error.message : "Could not save navigation item." });
+  }
+}
+
+async function handleMediaDelete(res, id, mode) {
+  try {
+    const media = await getMediaItem(id);
+    if (!media) return sendJson(res, 404, { error: "Media item not found." });
+    const usages = await mediaUsage(id);
+    if (mode === "remove-from-sections") {
+      const itemIds = [...new Set(usages.map((u) => u.id))];
+      for (const itemId of itemIds) {
+        await sbDelete("portfolio_item_sections", `portfolio_item_id=eq.${encodeURIComponent(itemId)}`);
+        await sbUpdate("portfolio_items", `id=eq.${encodeURIComponent(itemId)}`, { is_published: false });
+      }
+      return sendJson(res, 200, { removedFromSections: itemIds.length });
+    }
+    if (mode !== "permanent") return sendJson(res, 409, { error: "Choose remove-from-sections or permanent deletion.", usage: usages });
+    const portfolioItemIds = [...new Set(usages.map((u) => u.id))];
+    for (const itemId of portfolioItemIds) {
+      await sbDelete("portfolio_item_sections", `portfolio_item_id=eq.${encodeURIComponent(itemId)}`);
+    }
+    await sbDelete("portfolio_items", `media_id=eq.${encodeURIComponent(id)}`);
+    await sbDelete("media", `id=eq.${encodeURIComponent(id)}`);
+    const storagePath = storagePathFromUrl(media.file_url);
+    if (storagePath) await storageDelete(storagePath);
+    return sendJson(res, 200, { deleted: true });
+  } catch (error) {
+    return sendJson(res, 500, { error: "Could not delete media item." });
+  }
+}
+
+async function handleMediaEdit(req, res, id) {
+  try {
+    const media = await getMediaItem(id);
+    if (!media) return sendJson(res, 404, { error: "Media item not found." });
+    const body = await readJson(req);
+    const fileName = String(body.fileName || "").trim();
+    const altText = String(body.altText || "").trim();
+    if (!fileName || fileName.length > 255 || /[\\/\r\n]/.test(fileName) || altText.length > 1000)
+      return sendJson(res, 400, { error: "Provide a valid display filename and alt text." });
+    const update = { file_name: fileName, alt_text: altText };
+    if (typeof body.aiMetadata === "string" || body.aiMetadata === null) update.ai_metadata = body.aiMetadata;
+    const updated = await sbUpdate("media", `id=eq.${encodeURIComponent(id)}`, update);
+    return sendJson(res, 200, updated[0] || { ...media, ...update });
+  } catch (error) {
+    return sendJson(res, error.status || 500, { error: error.status ? error.message : "Could not update media details." });
+  }
+}
+
+async function handleMediaReplace(req, res, id) {
+  try {
+    const media = await getMediaItem(id);
+    if (!media) return sendJson(res, 404, { error: "Media item not found." });
+    const parsed = parseMultipart(await readBody(req), req.headers["content-type"] || "");
+    const photo = parsed.files.find((f) => f.name === "photo");
+    if (photo) {
+      let mimeType = (photo.type || "").split(";")[0].trim().toLowerCase();
+      if (mimeType === "image/jpg" || mimeType === "image/pjpeg") mimeType = "image/jpeg";
+      photo.type = mimeType;
+    }
+    if (!photo || !ALLOWED_IMAGE_TYPES.has(photo?.type) || !isValidImage(photo.data, photo.type))
+      return sendJson(res, 415, { error: "Upload a valid JPEG, PNG, WebP, or AVIF image." });
+    if (photo.data.length > MAX_UPLOAD_BYTES) return sendJson(res, 413, { error: "Image exceeds the 12 MB limit." });
+    const extension = ALLOWED_IMAGE_TYPES.get(photo.type);
+    const storageName = `${crypto.randomUUID()}${extension}`;
+    const newFileUrl = await storageUpload(storageName, photo.data, photo.type);
+    await sbUpdate("media", `id=eq.${encodeURIComponent(id)}`, {
+      file_name: photo.filename, file_url: newFileUrl, mime_type: photo.type,
+    });
+    const oldPath = storagePathFromUrl(media.file_url);
+    if (oldPath) await storageDelete(oldPath);
+    return sendJson(res, 200, { id, fileName: photo.filename, fileUrl: newFileUrl, mimeType: photo.type });
+  } catch (error) {
+    return sendJson(res, error.status || 500, { error: error.status ? error.message : "Could not replace media file." });
+  }
+}
+
+async function handleAiAnalyze(req, res) {
+  try {
+    const session = getSession(req);
+    if (!session) return sendJson(res, 401, { error: "Authentication required." });
+    const lastAnalysis = aiAnalysisCooldowns.get(session.key) || 0;
+    const elapsed = Date.now() - lastAnalysis;
+    if (elapsed < 5000) {
+      const wait = Math.ceil((5000 - elapsed) / 1000);
+      return sendJson(res, 429, { error: `Please wait ${wait}s before analyzing again.` });
+    }
+    const body = await readJson(req);
+    const mediaId = String(body.mediaId || "").trim();
+    if (!mediaId) return sendJson(res, 400, { error: "mediaId is required." });
+    const media = await getMediaItem(mediaId);
+    if (!media) return sendJson(res, 404, { error: "Media item not found." });
+
+    let imageBuffer;
+    const fileUrl = media.file_url;
+    if (fileUrl.startsWith("/assets/")) {
+      const fileName = decodeURIComponent(fileUrl.slice("/assets/".length));
+      const imagePath = path.join(ROOT, "assets", fileName);
+      if (!fs.existsSync(imagePath)) return sendJson(res, 404, { error: "Image file not found on disk." });
+      imageBuffer = fs.readFileSync(imagePath);
+    } else if (fileUrl.startsWith("http")) {
+      const dlRes = await fetch(fileUrl, { headers: sbHeaders() });
+      if (!dlRes.ok) return sendJson(res, 404, { error: "Could not download image from storage." });
+      imageBuffer = Buffer.from(await dlRes.arrayBuffer());
+    } else {
+      return sendJson(res, 400, { error: "Cannot resolve the image source." });
+    }
+
+    const tmpDir = IS_VERCEL ? "/tmp" : path.join(ROOT, "data");
+    const ext = ALLOWED_IMAGE_TYPES.get(media.mime_type) || ".jpg";
+    const tmpPath = path.join(tmpDir, `ai-analyze-${crypto.randomUUID()}${ext}`);
+    try {
+      fs.mkdirSync(tmpDir, { recursive: true });
+      fs.writeFileSync(tmpPath, imageBuffer);
+      aiAnalysisCooldowns.set(session.key, Date.now());
+      const result = await analyzePhoto(tmpPath, media.mime_type);
+      return sendJson(res, 200, result);
+    } finally {
+      fs.rmSync(tmpPath, { force: true });
+    }
+  } catch (error) {
+    return sendJson(res, error.status || 500, {
+      error: error.status ? error.message : "AI analysis failed unexpectedly.",
+    });
+  }
+}
+
+// ── Admin API router ──────────────────────────────────────────────────────────
 async function handleAdminApi(req, res, url) {
   const pathname = url.pathname;
+
   if (pathname === "/api/auth/session" && req.method === "GET") {
     try {
       const session = getSession(req);
@@ -678,13 +1055,11 @@ async function handleAdminApi(req, res, url) {
       return sendJson(res, 200, { authenticated: false, username: null });
     }
   }
+
   if (pathname === "/api/auth/login" && req.method === "POST") {
     const ip = req.socket.remoteAddress || "unknown";
     const attempts = loginAttempts.get(ip) || { count: 0, until: Date.now() + 15 * 60 * 1000 };
-    if (attempts.until < Date.now()) {
-      attempts.count = 0;
-      attempts.until = Date.now() + 15 * 60 * 1000;
-    }
+    if (attempts.until < Date.now()) { attempts.count = 0; attempts.until = Date.now() + 15 * 60 * 1000; }
     if (attempts.count >= 8) return sendJson(res, 429, { error: "Too many login attempts. Try again later." });
     return readJson(req).then(({ username, password }) => {
       const providedNormalized = String(username || "").trim().toLowerCase();
@@ -712,556 +1087,125 @@ async function handleAdminApi(req, res, url) {
       });
     }).catch((error) => sendJson(res, error.status || 400, { error: error.message }));
   }
+
   if (pathname === "/api/auth/logout" && req.method === "POST") {
     return sendJson(res, 200, { authenticated: false }, {
       "Set-Cookie": `${SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${isSecureRequest(req) ? "; Secure" : ""}`,
     });
   }
+
   if (!pathname.startsWith("/api/admin/")) return null;
   if (!requireAdmin(req, res)) return true;
 
+  // Dashboard
   if (pathname === "/api/admin/dashboard" && req.method === "GET") {
-    const count = (sql) => db.prepare(sql).get().count;
-    return sendJson(res, 200, {
-      totalPhotos: count("SELECT COUNT(*) AS count FROM portfolio_items"),
-      publishedPhotos: count("SELECT COUNT(*) AS count FROM portfolio_items WHERE is_published = 1 AND is_hidden = 0"),
-      draftPhotos: count("SELECT COUNT(*) AS count FROM portfolio_items WHERE is_published = 0"),
-      featuredPhotos: count("SELECT COUNT(*) AS count FROM portfolio_items WHERE is_featured = 1"),
-      skills: count("SELECT COUNT(*) AS count FROM skills"),
-      socialLinks: count("SELECT COUNT(*) AS count FROM social_links"),
-      navigationItems: count("SELECT COUNT(*) AS count FROM navigation_items"),
-    });
+    try {
+      const countTable = async (table, filter = "") => {
+        const qs = `select=id${filter ? "&" + filter : ""}`;
+        const r = await fetch(`${SUPABASE_URL}/rest/v1/${table}?${qs}`, {
+          headers: sbHeaders({ Prefer: "count=exact" }),
+        });
+        const range = r.headers.get("content-range") || "*/0";
+        return parseInt(range.split("/")[1]) || 0;
+      };
+      const [totalPhotos, publishedPhotos, draftPhotos, featuredPhotos, skills, socialLinks, navigationItems] = await Promise.all([
+        countTable("portfolio_items"),
+        countTable("portfolio_items", "is_published=eq.true&is_hidden=eq.false"),
+        countTable("portfolio_items", "is_published=eq.false"),
+        countTable("portfolio_items", "is_featured=eq.true"),
+        countTable("skills"),
+        countTable("social_links"),
+        countTable("navigation_items"),
+      ]);
+      return sendJson(res, 200, { totalPhotos, publishedPhotos, draftPhotos, featuredPhotos, skills, socialLinks, navigationItems });
+    } catch (error) {
+      return sendJson(res, 500, { error: "Could not load dashboard statistics." });
+    }
   }
-  if (pathname === "/api/admin/portfolio" && req.method === "GET") {
-    return sendJson(res, 200, getPortfolioItems());
-  }
-  if (pathname === "/api/admin/portfolio" && req.method === "POST") {
-    return handlePortfolioWrite(req, res, null);
-  }
+
+  // Portfolio
+  if (pathname === "/api/admin/portfolio" && req.method === "GET") return sendJson(res, 200, await getPortfolioItems());
+  if (pathname === "/api/admin/portfolio" && req.method === "POST") return handlePortfolioWrite(req, res, null);
   const portfolioMatch = pathname.match(/^\/api\/admin\/portfolio\/([a-f0-9-]+)$/i);
   if (portfolioMatch && req.method === "PUT") return handlePortfolioWrite(req, res, portfolioMatch[1]);
   if (portfolioMatch && req.method === "DELETE") return handlePortfolioDelete(res, portfolioMatch[1]);
 
-  if (pathname === "/api/admin/sections" && req.method === "GET") return sendJson(res, 200, getSections());
+  // Sections
+  if (pathname === "/api/admin/sections" && req.method === "GET") return sendJson(res, 200, await getSections());
   if (pathname === "/api/admin/sections" && req.method === "POST") return handleSectionWrite(req, res, null);
   const sectionMatch = pathname.match(/^\/api\/admin\/sections\/([a-z0-9-]+)$/i);
   if (sectionMatch && req.method === "PUT") return handleSectionWrite(req, res, sectionMatch[1]);
   if (sectionMatch && req.method === "DELETE") return handleSectionDelete(res, sectionMatch[1]);
 
-  if (pathname === "/api/admin/content" && req.method === "GET") return sendJson(res, 200, getContent());
+  // Content
+  if (pathname === "/api/admin/content" && req.method === "GET") return sendJson(res, 200, await getContent());
   if (pathname === "/api/admin/content" && req.method === "PUT") return handleContentWrite(req, res);
 
-  if (pathname === "/api/admin/social" && req.method === "GET") return sendJson(res, 200, getSocialLinks());
+  // Social
+  if (pathname === "/api/admin/social" && req.method === "GET") return sendJson(res, 200, await getSocialLinks());
   if (pathname === "/api/admin/social" && req.method === "POST") return handleSocialWrite(req, res, null);
   const socialMatch = pathname.match(/^\/api\/admin\/social\/([a-z0-9-]+)$/i);
   if (socialMatch && req.method === "PUT") return handleSocialWrite(req, res, socialMatch[1]);
   if (socialMatch && req.method === "DELETE") {
-    db.prepare("DELETE FROM social_links WHERE id = ?").run(socialMatch[1]);
-    return sendJson(res, 200, { deleted: true });
+    try {
+      await sbDelete("social_links", `id=eq.${encodeURIComponent(socialMatch[1])}`);
+      return sendJson(res, 200, { deleted: true });
+    } catch (error) { return sendJson(res, 500, { error: "Could not delete social link." }); }
   }
 
-  if (pathname === "/api/admin/navigation" && req.method === "GET") return sendJson(res, 200, getNavigation());
+  // Navigation
+  if (pathname === "/api/admin/navigation" && req.method === "GET") return sendJson(res, 200, await getNavigation());
   if (pathname === "/api/admin/navigation" && req.method === "POST") return handleNavigationWrite(req, res, null);
   const navigationMatch = pathname.match(/^\/api\/admin\/navigation\/([a-z0-9-]+)$/i);
   if (navigationMatch && req.method === "PUT") return handleNavigationWrite(req, res, navigationMatch[1]);
   if (navigationMatch && req.method === "DELETE") {
-    db.prepare("DELETE FROM navigation_items WHERE id = ?").run(navigationMatch[1]);
-    return sendJson(res, 200, { deleted: true });
+    try {
+      await sbDelete("navigation_items", `id=eq.${encodeURIComponent(navigationMatch[1])}`);
+      return sendJson(res, 200, { deleted: true });
+    } catch (error) { return sendJson(res, 500, { error: "Could not delete navigation item." }); }
   }
 
+  // Media
   if (pathname === "/api/admin/media" && req.method === "GET") {
-    const rows = db.prepare(`
-      SELECT m.*, COUNT(DISTINCT p.id) AS item_count
-      FROM media m LEFT JOIN portfolio_items p ON p.media_id = m.id
-      GROUP BY m.id ORDER BY m.created_at DESC
-    `).all().map((row) => ({ ...row, usage: mediaUsage(row.id) }));
-    return sendJson(res, 200, rows);
+    try {
+      const items = await sbSelect("media", "select=*&order=created_at.desc");
+      const withUsage = await Promise.all(items.map(async (m) => ({ ...m, usage: await mediaUsage(m.id) })));
+      return sendJson(res, 200, withUsage);
+    } catch (error) { return sendJson(res, 500, { error: "Could not load media." }); }
   }
   const mediaMatch = pathname.match(/^\/api\/admin\/media\/([a-f0-9-]+)$/i);
   if (mediaMatch && req.method === "GET") {
-    const media = db.prepare("SELECT * FROM media WHERE id = ?").get(mediaMatch[1]);
-    if (!media) return sendJson(res, 404, { error: "Media item not found." });
-    return sendJson(res, 200, { ...media, usage: mediaUsage(mediaMatch[1]) });
+    try {
+      const media = await getMediaItem(mediaMatch[1]);
+      if (!media) return sendJson(res, 404, { error: "Media item not found." });
+      return sendJson(res, 200, { ...media, usage: await mediaUsage(mediaMatch[1]) });
+    } catch (error) { return sendJson(res, 500, { error: "Could not load media item." }); }
   }
   if (mediaMatch && req.method === "DELETE") return handleMediaDelete(res, mediaMatch[1], url.searchParams.get("mode"));
   if (mediaMatch && req.method === "PATCH") return handleMediaEdit(req, res, mediaMatch[1]);
   if (mediaMatch && req.method === "PUT") return handleMediaReplace(req, res, mediaMatch[1]);
 
-  if (pathname === "/api/admin/ai/analyze-photo" && req.method === "POST") {
-    return handleAiAnalyze(req, res);
-  }
+  // AI
+  if (pathname === "/api/admin/ai/analyze-photo" && req.method === "POST") return handleAiAnalyze(req, res);
 
-  // ── Skills CRUD ──────────────────────────────────────────────────────────
-  if (pathname === "/api/admin/skills" && req.method === "GET") {
-    return sendJson(res, 200, getSkills());
-  }
-  if (pathname === "/api/admin/skills" && req.method === "POST") {
-    return handleSkillWrite(req, res, null);
-  }
+  // Skills
+  if (pathname === "/api/admin/skills" && req.method === "GET") return sendJson(res, 200, await getSkills());
+  if (pathname === "/api/admin/skills" && req.method === "POST") return handleSkillWrite(req, res, null);
   const skillMatch = pathname.match(/^\/api\/admin\/skills\/([a-z0-9-]+)$/i);
-  if (skillMatch && req.method === "PUT")    return handleSkillWrite(req, res, skillMatch[1]);
+  if (skillMatch && req.method === "PUT") return handleSkillWrite(req, res, skillMatch[1]);
   if (skillMatch && req.method === "DELETE") {
-    const deleted = db.prepare("DELETE FROM skills WHERE id = ?").run(skillMatch[1]);
-    if (deleted.changes === 0) return sendJson(res, 404, { error: "Skill not found." });
-    return sendJson(res, 200, { deleted: true });
+    try {
+      const existing = await sbSelect("skills", `id=eq.${encodeURIComponent(skillMatch[1])}&select=id`);
+      if (!existing.length) return sendJson(res, 404, { error: "Skill not found." });
+      await sbDelete("skills", `id=eq.${encodeURIComponent(skillMatch[1])}`);
+      return sendJson(res, 200, { deleted: true });
+    } catch (error) { return sendJson(res, 500, { error: "Could not delete skill." }); }
   }
 
   return sendJson(res, 404, { error: "Admin API route not found." });
 }
 
-async function handleSkillWrite(req, res, id) {
-  try {
-    const body = await readJson(req);
-    const name = String(body.name || "").trim();
-    if (!name || name.length > 60) {
-      return sendJson(res, 400, { error: "Skill name must be 1-60 characters." });
-    }
-    const rawPercent = body.percent ?? 80;
-    // Reject non-integer numbers (80.5) and non-numeric strings ("abc")
-    if (typeof rawPercent === "number" && !Number.isInteger(rawPercent)) {
-      return sendJson(res, 400, { error: "Percent must be an integer from 0 to 100." });
-    }
-    const percentStr = String(rawPercent).trim();
-    const percent = Number(percentStr);
-    if (!Number.isInteger(percent) || isNaN(percent) || percent < 0 || percent > 100) {
-      return sendJson(res, 400, { error: "Percent must be an integer from 0 to 100." });
-    }
-    const icon = String(body.icon || "ri-star-line").trim();
-    if (!/^ri-[a-z0-9-]+$/.test(icon)) {
-      return sendJson(res, 400, { error: "Icon must match the pattern ri-<name> (e.g. ri-camera-line)." });
-    }
-    const displayOrder = parseInt(body.displayOrder ?? 0, 10);
-    const isVisible = body.visible === true || body.visible === 1 || body.visible === "true" ? 1 : 0;
-
-    if (id) {
-      const existing = db.prepare("SELECT id FROM skills WHERE id = ?").get(id);
-      if (!existing) return sendJson(res, 404, { error: "Skill not found." });
-      db.prepare("UPDATE skills SET name=?, percent=?, icon=?, display_order=?, is_visible=? WHERE id=?")
-        .run(name, percent, icon, displayOrder, isVisible, id);
-    } else {
-      const newId = crypto.randomUUID();
-      db.prepare("INSERT INTO skills (id, name, percent, icon, display_order, is_visible) VALUES (?,?,?,?,?,?)")
-        .run(newId, name, percent, icon, displayOrder, isVisible);
-    }
-    return sendJson(res, 200, getSkills());
-  } catch (error) {
-    return sendJson(res, error.status || 500, { error: error.status ? error.message : "Could not save skill." });
-  }
-}
-
-async function handlePortfolioWrite(req, res, id) {
-  try {
-    const contentType = req.headers["content-type"] || "";
-    let body;
-    let imageFile = null;
-    if (contentType.toLowerCase().startsWith("multipart/form-data")) {
-      const parsed = parseMultipart(await readBody(req), contentType);
-      body = parsed.fields;
-      imageFile = parsed.files.find((file) => file.name === "photo") || null;
-    } else {
-      body = await readJson(req);
-    }
-    const existing = id ? db.prepare("SELECT * FROM portfolio_items WHERE id = ?").get(id) : null;
-    if (id && !existing) return sendJson(res, 404, { error: "Portfolio item not found." });
-    if (!existing && !imageFile) return sendJson(res, 400, { error: "Choose an image file to upload." });
-    if (imageFile) {
-      let mimeType = (imageFile.type || "").split(";")[0].trim().toLowerCase();
-      if (mimeType === "image/jpg" || mimeType === "image/pjpeg") mimeType = "image/jpeg";
-      imageFile.type = mimeType;
-      if (!ALLOWED_IMAGE_TYPES.has(imageFile.type)) {
-        return sendJson(res, 415, { error: "Use a JPEG, PNG, WebP, or AVIF image." });
-      }
-      if (imageFile.data.length > MAX_UPLOAD_BYTES) return sendJson(res, 413, { error: "Image exceeds the 12 MB limit." });
-      if (imageFile.data.length < 12 || !isValidImage(imageFile.data, imageFile.type)) {
-        return sendJson(res, 415, { error: "The uploaded file does not match its image type." });
-      }
-    }
-    const title = String(body.title || "").trim();
-    if (!title) return sendJson(res, 400, { error: "Photo title is required." });
-    const sections = new Set(parseLocations(body));
-    if (boolValue(body.featured)) sections.add("featured");
-    else sections.delete("featured");
-    const category = String(body.category || "").trim();
-    if (category && db.prepare("SELECT id FROM sections WHERE slug = ? AND is_system = 0").get(category)) {
-      sections.add(category);
-    }
-    const oldCategory = existing?.category;
-    if (oldCategory && oldCategory !== category && !sections.has(oldCategory)) {
-      sections.delete(oldCategory);
-    }
-    if (category && db.prepare("SELECT id FROM sections WHERE slug = ? AND is_system = 0").get(category)) {
-      sections.add(category);
-    }
-    let newMediaId = existing?.media_id || null;
-    let newFileUrl = null;
-    if (imageFile) {
-      newMediaId = crypto.randomUUID();
-      const extension = ALLOWED_IMAGE_TYPES.get(imageFile.type);
-      const filename = `${crypto.randomUUID()}${extension}`;
-      newFileUrl = `/uploads/${filename}`;
-      fs.writeFileSync(path.join(UPLOAD_DIR, filename), imageFile.data, { flag: "wx" });
-      db.prepare("INSERT INTO media (id, file_name, file_url, mime_type, alt_text) VALUES (?, ?, ?, ?, ?)")
-        .run(newMediaId, imageFile.filename, newFileUrl, imageFile.type, String(body.description || "").trim());
-    }
-    const itemId = existing?.id || crypto.randomUUID();
-    const order = Number.isFinite(Number(body.displayOrder)) ? Math.max(0, Number(body.displayOrder)) : 0;
-    db.exec("BEGIN");
-    try {
-      if (existing) {
-        db.prepare(`
-          UPDATE portfolio_items SET media_id = ?, title = ?, description = ?, category = ?,
-            location = ?, photo_date = ?, tags = ?, is_featured = ?, is_published = ?, is_hidden = ?,
-            display_order = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
-        `).run(
-          newMediaId, title, String(body.description || "").trim(), String(body.category || "").trim(),
-          String(body.location || "").trim(), String(body.photoDate || "").trim(),
-          Array.isArray(body.tags) ? body.tags.join(",") : String(body.tags || "").trim(),
-          boolValue(body.featured), boolValue(body.published), boolValue(body.hidden), order, itemId,
-        );
-      } else {
-        db.prepare(`
-          INSERT INTO portfolio_items
-            (id, media_id, title, description, category, location, photo_date, tags, is_featured, is_published, is_hidden, display_order)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-          itemId, newMediaId, title, String(body.description || "").trim(), String(body.category || "").trim(),
-          String(body.location || "").trim(), String(body.photoDate || "").trim(),
-          Array.isArray(body.tags) ? body.tags.join(",") : String(body.tags || "").trim(),
-          boolValue(body.featured), boolValue(body.published), boolValue(body.hidden), order,
-        );
-      }
-      saveLocations(itemId, [...sections]);
-      if (newMediaId) {
-        const altText = typeof body.altText === "string" ? body.altText.trim() : (typeof body.alt_text === "string" ? body.alt_text.trim() : undefined);
-        let aiMetaStr = undefined;
-        if (body.aiMetadata) {
-          try {
-            const rawObj = typeof body.aiMetadata === "string" ? JSON.parse(body.aiMetadata) : body.aiMetadata;
-            aiMetaStr = JSON.stringify({
-              subject: String(rawObj.subject || "").trim(),
-              scene: String(rawObj.scene || "").trim(),
-              mood: String(rawObj.mood || "").trim(),
-              lighting: String(rawObj.lighting || "").trim(),
-              composition: String(rawObj.composition || "").trim(),
-              style: String(rawObj.style || "").trim(),
-              analyzedAt: rawObj.analyzedAt || new Date().toISOString(),
-            });
-          } catch {}
-        }
-        if (altText !== undefined && aiMetaStr !== undefined) {
-          db.prepare("UPDATE media SET alt_text = ?, ai_metadata = ? WHERE id = ?").run(altText, aiMetaStr, newMediaId);
-        } else if (altText !== undefined) {
-          db.prepare("UPDATE media SET alt_text = ? WHERE id = ?").run(altText, newMediaId);
-        } else if (aiMetaStr !== undefined) {
-          db.prepare("UPDATE media SET ai_metadata = ? WHERE id = ?").run(aiMetaStr, newMediaId);
-        }
-      }
-      db.exec("COMMIT");
-    } catch (error) {
-      db.exec("ROLLBACK");
-      if (newFileUrl) {
-        db.prepare("DELETE FROM media WHERE id = ?").run(newMediaId);
-        deleteOwnedFile(newFileUrl);
-      }
-      throw error;
-    }
-    if (existing && imageFile && existing.media_id !== newMediaId) cleanupUnusedMedia(existing.media_id);
-    return sendJson(res, existing ? 200 : 201, getPortfolioItem(itemId));
-  } catch (error) {
-    return sendJson(res, error.status || 500, { error: error.status ? error.message : "Could not save portfolio item." });
-  }
-}
-
-function isValidImage(data, type) {
-  if (!data || data.length < 12) return false;
-  let normType = (type || "").split(";")[0].trim().toLowerCase();
-  if (normType === "image/jpg" || normType === "image/pjpeg") normType = "image/jpeg";
-
-  if (normType === "image/jpeg") {
-    return data[0] === 0xff && data[1] === 0xd8;
-  }
-  if (normType === "image/png") {
-    return data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
-  }
-  if (normType === "image/webp") {
-    return data.toString("ascii", 0, 4) === "RIFF" && data.toString("ascii", 8, 12) === "WEBP";
-  }
-  if (normType === "image/avif") {
-    return data.toString("ascii", 4, 8) === "ftyp" && data.subarray(8, 128).toString("ascii").includes("avif");
-  }
-  return false;
-}
-
-function boolValue(value) {
-  return value === true || value === "true" || value === "1" || value === 1 ? 1 : 0;
-}
-
-function cleanupUnusedMedia(mediaId) {
-  const media = db.prepare("SELECT file_url FROM media WHERE id = ?").get(mediaId);
-  const reference = db.prepare("SELECT id FROM portfolio_items WHERE media_id = ? LIMIT 1").get(mediaId);
-  if (media && !reference) {
-    db.prepare("DELETE FROM media WHERE id = ?").run(mediaId);
-    deleteOwnedFile(media.file_url);
-  }
-}
-
-function handlePortfolioDelete(res, id) {
-  const row = db.prepare("SELECT media_id FROM portfolio_items WHERE id = ?").get(id);
-  if (!row) return sendJson(res, 404, { error: "Portfolio item not found." });
-  db.prepare("DELETE FROM portfolio_items WHERE id = ?").run(id);
-  cleanupUnusedMedia(row.media_id);
-  return sendJson(res, 200, { deleted: true });
-}
-
-function normalizeSlug(value) {
-  return String(value || "").trim().toLowerCase()
-    .normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-}
-
-async function handleSectionWrite(req, res, id) {
-  try {
-    const body = await readJson(req);
-    const existing = id ? db.prepare("SELECT * FROM sections WHERE id = ?").get(id) : null;
-    if (id && !existing) return sendJson(res, 404, { error: "Section not found." });
-    if (existing?.is_system) return sendJson(res, 403, { error: "Built-in display locations cannot be renamed." });
-    const name = String(body.name || "").trim();
-    const slug = normalizeSlug(body.slug || name);
-    if (!name || !slug) return sendJson(res, 400, { error: "Section name and a valid slug are required." });
-    if (RESERVED_SLUGS.has(slug)) return sendJson(res, 400, { error: "That slug is reserved for a site display location." });
-    const order = Math.max(0, Number(body.displayOrder) || 0);
-    if (existing) {
-      db.prepare("UPDATE sections SET name=?, title=?, description=?, slug=?, is_visible=?, display_order=? WHERE id=?")
-        .run(name, String(body.title || name), String(body.description || ""), slug, boolValue(body.visible), order, id);
-    } else {
-      const sectionId = crypto.randomUUID();
-      db.prepare("INSERT INTO sections (id, name, title, description, slug, is_visible, display_order) VALUES (?, ?, ?, ?, ?, ?, ?)")
-        .run(sectionId, name, String(body.title || name), String(body.description || ""), slug, boolValue(body.visible ?? true), order);
-      id = sectionId;
-    }
-    return sendJson(res, existing ? 200 : 201, getSections().find((section) => section.id === id));
-  } catch (error) {
-    console.error("Could not save section:", error);
-    const conflict = String(error.message).includes("UNIQUE constraint");
-    return sendJson(res, conflict ? 409 : error.status || 500, { error: conflict ? "That section slug already exists." : error.status ? error.message : "Could not save section." });
-  }
-}
-
-function handleSectionDelete(res, id) {
-  const section = db.prepare("SELECT * FROM sections WHERE id = ?").get(id);
-  if (!section) return sendJson(res, 404, { error: "Section not found." });
-  if (section.is_system) return sendJson(res, 403, { error: "Built-in display locations cannot be deleted." });
-  db.prepare("DELETE FROM sections WHERE id = ?").run(id);
-  return sendJson(res, 200, { deleted: true });
-}
-
-async function handleContentWrite(req, res) {
-  try {
-    const body = await readJson(req);
-    const save = db.prepare(`
-      INSERT INTO site_content (content_key, content_value, updated_at)
-      VALUES (?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(content_key) DO UPDATE SET content_value=excluded.content_value, updated_at=CURRENT_TIMESTAMP
-    `);
-    db.exec("BEGIN");
-    try {
-      for (const [key, value] of Object.entries(body)) {
-        if (typeof value !== "string" || key.length > 120 || value.length > 10000) {
-          throw Object.assign(new Error(`Invalid content value for ${key}.`), { status: 400 });
-        }
-        save.run(key, value);
-      }
-      db.exec("COMMIT");
-    } catch (error) {
-      db.exec("ROLLBACK");
-      throw error;
-    }
-    return sendJson(res, 200, getContent());
-  } catch (error) {
-    return sendJson(res, error.status || 500, { error: error.status ? error.message : "Could not save site content." });
-  }
-}
-
-async function handleSocialWrite(req, res, id) {
-  try {
-    const body = await readJson(req);
-    const existing = id ? db.prepare("SELECT id FROM social_links WHERE id = ?").get(id) : null;
-    if (id && !existing) return sendJson(res, 404, { error: "Social link not found." });
-    const platform = String(body.platform || "").trim();
-    const displayName = String(body.displayName || "").trim();
-    const url = validateExternalUrl(body.url, ["https:", "mailto:", "tel:"]);
-    const icon = String(body.icon || "").trim();
-    if (!platform || !displayName || !icon) return sendJson(res, 400, { error: "Platform, display name, and icon are required." });
-    const locations = Array.isArray(body.locations) ? [...new Set(body.locations)] : [];
-    const linkId = existing?.id || crypto.randomUUID();
-    if (existing) {
-      db.prepare("UPDATE social_links SET platform=?, display_name=?, url=?, icon=?, is_visible=?, display_order=? WHERE id=?")
-        .run(platform, displayName, url, icon, boolValue(body.visible), Math.max(0, Number(body.displayOrder) || 0), linkId);
-    } else {
-      db.prepare("INSERT INTO social_links (id, platform, display_name, url, icon, is_visible, display_order) VALUES (?, ?, ?, ?, ?, ?, ?)")
-        .run(linkId, platform, displayName, url, icon, boolValue(body.visible ?? true), Math.max(0, Number(body.displayOrder) || 0));
-    }
-    assignSocialLocations(linkId, locations);
-    return sendJson(res, existing ? 200 : 201, getSocialLinks().find((link) => link.id === linkId));
-  } catch (error) {
-    return sendJson(res, error.status || 500, { error: error.status ? error.message : "Could not save social link." });
-  }
-}
-
-async function handleNavigationWrite(req, res, id) {
-  try {
-    const body = await readJson(req);
-    const existing = id ? db.prepare("SELECT id FROM navigation_items WHERE id = ?").get(id) : null;
-    if (id && !existing) return sendJson(res, 404, { error: "Navigation item not found." });
-    const label = String(body.label || "").trim();
-    const destination = String(body.url || "").trim();
-    if (!label || !destination || destination.startsWith("//") || /[\r\n]/.test(destination)) {
-      return sendJson(res, 400, { error: "Navigation label and a safe URL are required." });
-    }
-    if (/^(javascript|data|vbscript):/i.test(destination)) {
-      return sendJson(res, 400, { error: "That navigation URL scheme is not allowed." });
-    }
-    const itemId = existing?.id || crypto.randomUUID();
-    const values = [
-      label, destination, String(body.icon || ""), boolValue(body.visible ?? true),
-      Math.max(0, Number(body.displayOrder) || 0), itemId,
-    ];
-    if (existing) {
-      db.prepare("UPDATE navigation_items SET label=?, url=?, icon=?, is_visible=?, display_order=? WHERE id=?").run(...values);
-    } else {
-      db.prepare("INSERT INTO navigation_items (label, url, icon, is_visible, display_order, id) VALUES (?, ?, ?, ?, ?, ?)").run(...values);
-    }
-    return sendJson(res, existing ? 200 : 201, getNavigation().find((item) => item.id === itemId));
-  } catch (error) {
-    return sendJson(res, error.status || 500, { error: error.status ? error.message : "Could not save navigation item." });
-  }
-}
-
-function handleMediaDelete(res, id, mode) {
-  const media = db.prepare("SELECT * FROM media WHERE id = ?").get(id);
-  if (!media) return sendJson(res, 404, { error: "Media item not found." });
-  const usages = mediaUsage(id);
-  if (mode === "remove-from-sections") {
-    const itemIds = [...new Set(usages.map((usage) => usage.id))];
-    for (const itemId of itemIds) {
-      db.prepare("DELETE FROM portfolio_item_sections WHERE portfolio_item_id = ?").run(itemId);
-      db.prepare("UPDATE portfolio_items SET is_published = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(itemId);
-    }
-    return sendJson(res, 200, { removedFromSections: itemIds.length });
-  }
-  if (mode !== "permanent") return sendJson(res, 409, { error: "Choose remove-from-sections or permanent deletion.", usage: usages });
-  db.exec("BEGIN");
-  try {
-    db.prepare("DELETE FROM portfolio_item_sections WHERE portfolio_item_id IN (SELECT id FROM portfolio_items WHERE media_id = ?)").run(id);
-    db.prepare("DELETE FROM portfolio_items WHERE media_id = ?").run(id);
-    db.prepare("DELETE FROM media WHERE id = ?").run(id);
-    db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
-  }
-  deleteOwnedFile(media.file_url);
-  return sendJson(res, 200, { deleted: true });
-}
-
-async function handleMediaEdit(req, res, id) {
-  try {
-    const media = db.prepare("SELECT id FROM media WHERE id = ?").get(id);
-    if (!media) return sendJson(res, 404, { error: "Media item not found." });
-    const body = await readJson(req);
-    const fileName = String(body.fileName || "").trim();
-    const altText = String(body.altText || "").trim();
-    if (!fileName || fileName.length > 255 || /[\\/\r\n]/.test(fileName) || altText.length > 1000) {
-      return sendJson(res, 400, { error: "Provide a valid display filename and alt text." });
-    }
-    if (typeof body.aiMetadata === "string" || body.aiMetadata === null) {
-      db.prepare("UPDATE media SET file_name = ?, alt_text = ?, ai_metadata = ? WHERE id = ?")
-        .run(fileName, altText, body.aiMetadata, id);
-    } else {
-      db.prepare("UPDATE media SET file_name = ?, alt_text = ? WHERE id = ?").run(fileName, altText, id);
-    }
-    return sendJson(res, 200, db.prepare("SELECT * FROM media WHERE id = ?").get(id));
-  } catch (error) {
-    return sendJson(res, error.status || 500, { error: error.status ? error.message : "Could not update media details." });
-  }
-}
-
-async function handleAiAnalyze(req, res) {
-  try {
-    const session = getSession(req);
-    if (!session) return sendJson(res, 401, { error: "Authentication required." });
-
-    // 5-second per-session cooldown
-    const lastAnalysis = aiAnalysisCooldowns.get(session.key) || 0;
-    const elapsed = Date.now() - lastAnalysis;
-    if (elapsed < 5000) {
-      const wait = Math.ceil((5000 - elapsed) / 1000);
-      return sendJson(res, 429, { error: `Please wait ${wait}s before analyzing again.` });
-    }
-
-    const body = await readJson(req);
-    const mediaId = String(body.mediaId || "").trim();
-    if (!mediaId) return sendJson(res, 400, { error: "mediaId is required." });
-
-    const media = db.prepare("SELECT * FROM media WHERE id = ?").get(mediaId);
-    if (!media) return sendJson(res, 404, { error: "Media item not found." });
-
-    // Resolve image path on disk (never use a URL)
-    let imagePath;
-    const fileUrl = media.file_url;
-    if (fileUrl.startsWith("/uploads/")) {
-      const fileName = fileUrl.slice("/uploads/".length);
-      imagePath = path.join(UPLOAD_DIR, fileName);
-    } else if (fileUrl.startsWith("/assets/")) {
-      const fileName = decodeURIComponent(fileUrl.slice("/assets/".length));
-      imagePath = path.join(ROOT, "assets", fileName);
-    } else {
-      return sendJson(res, 400, { error: "Cannot resolve the image file path." });
-    }
-
-    if (!fs.existsSync(imagePath)) {
-      return sendJson(res, 404, { error: "Image file not found on disk." });
-    }
-
-    aiAnalysisCooldowns.set(session.key, Date.now());
-    const result = await analyzePhoto(imagePath, media.mime_type);
-
-    return sendJson(res, 200, result);
-  } catch (error) {
-    return sendJson(res, error.status || 500, {
-      error: error.status ? error.message : "AI analysis failed unexpectedly.",
-    });
-  }
-}
-
-async function handleMediaReplace(req, res, id) {
-  try {
-    const media = db.prepare("SELECT * FROM media WHERE id = ?").get(id);
-    if (!media) return sendJson(res, 404, { error: "Media item not found." });
-    const parsed = parseMultipart(await readBody(req), req.headers["content-type"] || "");
-    const photo = parsed.files.find((file) => file.name === "photo");
-    if (photo) {
-      let mimeType = (photo.type || "").split(";")[0].trim().toLowerCase();
-      if (mimeType === "image/jpg" || mimeType === "image/pjpeg") mimeType = "image/jpeg";
-      photo.type = mimeType;
-    }
-    if (!photo || !ALLOWED_IMAGE_TYPES.has(photo?.type) || !isValidImage(photo.data, photo.type)) {
-      return sendJson(res, 415, { error: "Upload a valid JPEG, PNG, WebP, or AVIF image." });
-    }
-    if (photo.data.length > MAX_UPLOAD_BYTES) return sendJson(res, 413, { error: "Image exceeds the 12 MB limit." });
-    const extension = ALLOWED_IMAGE_TYPES.get(photo.type);
-    const fileName = `${crypto.randomUUID()}${extension}`;
-    const fileUrl = `/uploads/${fileName}`;
-    fs.writeFileSync(path.join(UPLOAD_DIR, fileName), photo.data, { flag: "wx" });
-    db.prepare("UPDATE media SET file_name=?, file_url=?, mime_type=? WHERE id=?")
-      .run(photo.filename, fileUrl, photo.type, id);
-    deleteOwnedFile(media.file_url);
-    return sendJson(res, 200, { id, fileName: photo.filename, fileUrl, mimeType: photo.type });
-  } catch (error) {
-    return sendJson(res, error.status || 500, { error: error.status ? error.message : "Could not replace media file." });
-  }
-}
-
+// ── Static file serving ───────────────────────────────────────────────────────
 function serveStatic(req, res, url) {
   const pathname = decodeURIComponent(url.pathname);
   const cleanPath = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
@@ -1276,7 +1220,7 @@ function serveStatic(req, res, url) {
       "Content-Type": "text/html; charset=utf-8",
       "Cache-Control": "no-store",
       "X-Content-Type-Options": "nosniff",
-      "Content-Security-Policy": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com; script-src 'self'; connect-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+      "Content-Security-Policy": "default-src 'self'; img-src 'self' data: https://pogyvppbliyjhtihrtgb.supabase.co; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://fonts.googleapis.com; font-src 'self' https://cdn.jsdelivr.net https://fonts.gstatic.com; script-src 'self'; connect-src 'self' https://pogyvppbliyjhtihrtgb.supabase.co; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
     });
     return res.end(file);
   }
@@ -1284,19 +1228,14 @@ function serveStatic(req, res, url) {
   const relative = pathname === "/" ? "home.html" : aliases[pathname] || pathname.slice(1);
   const firstPathSegment = relative.split(/[\\/]/, 1)[0].toLowerCase();
   if (
-    firstPathSegment === ".git" ||
-    firstPathSegment === "data" ||
-    firstPathSegment === "node_modules" ||
-    relative.toLowerCase() === ".env" ||
-    relative.toLowerCase() === "javascript/server.js"
+    firstPathSegment === ".git" || firstPathSegment === "data" || firstPathSegment === "node_modules" ||
+    relative.toLowerCase() === ".env" || relative.toLowerCase() === "javascript/server.js"
   ) {
     res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
     return res.end("Not found");
   }
-  const base = relative.startsWith("uploads/") ? UPLOAD_DIR : ROOT;
-  const target = path.resolve(base, relative.startsWith("uploads/") ? relative.slice("uploads/".length) : relative);
-  const allowedRoot = relative.startsWith("uploads/") ? UPLOAD_DIR : ROOT;
-  if (!target.startsWith(`${allowedRoot}${path.sep}`) && target !== allowedRoot) {
+  const target = path.resolve(ROOT, relative);
+  if (!target.startsWith(`${ROOT}${path.sep}`) && target !== ROOT) {
     res.writeHead(403);
     return res.end("Forbidden");
   }
@@ -1309,47 +1248,41 @@ function serveStatic(req, res, url) {
     "Content-Type": type,
     "X-Content-Type-Options": "nosniff",
     "Cache-Control": type.startsWith("image/") ? "public, max-age=86400" : "no-cache",
-    ...(relative.startsWith("uploads/") ? { "Content-Disposition": "inline" } : {}),
   });
   return fs.createReadStream(target).pipe(res);
 }
 
+// ── Main request handler ──────────────────────────────────────────────────────
 async function requestHandler(req, res) {
   const rawPath = req.headers["x-forwarded-uri"] || req.headers["x-matched-path"] || req.url;
   const url = new URL(rawPath, `http://${req.headers.host || "localhost"}`);
 
-  // Authentication endpoints must remain available even if Supabase hydration
-  // is temporarily unavailable. Auth/session state is independent of CMS data.
-  const isAuthRoute = url.pathname.startsWith("/api/auth/");
-  if (!isAuthRoute) {
-    await ensureHydrated();
-  }
-
   if (req.method === "GET" && url.pathname === "/api/public/site") {
     try {
-      const sections = getSections().filter((section) => section.visible);
-      const items = getPortfolioItems({ publicOnly: true });
+      const sections = (await getSections()).filter((s) => s.visible);
+      const items = await getPortfolioItems({ publicOnly: true });
       const photos = {};
       for (const section of sections) {
         photos[section.slug] = items.filter((item) => item.sections.includes(section.slug));
       }
-      const socialLinks = getSocialLinks().filter((link) => link.visible);
+      const socialLinks = (await getSocialLinks()).filter((l) => l.visible);
       return sendJson(res, 200, {
-        content: getContent(),
-        navigation: getNavigation().filter((item) => item.visible),
+        content: await getContent(),
+        navigation: (await getNavigation()).filter((item) => item.visible),
         sections,
         photos,
         socialLinks,
-        skills: getSkills({ visibleOnly: true }),
+        skills: await getSkills({ visibleOnly: true }),
       });
     } catch (error) {
       console.error("Public site API failed:", error);
       return sendJson(res, 500, { error: "Website content could not be loaded." });
     }
   }
+
   if (url.pathname.startsWith("/api/") && req.method !== "GET" && !checkOrigin(req, res)) return;
   const handled = await handleAdminApi(req, res, url);
-  if (handled) {\n    if (url.pathname.startsWith("/api/admin/") && req.method !== "GET") schedulePersistence();\n    return;\n  }
+  if (handled) return;
   if (url.pathname.startsWith("/api/")) return sendJson(res, 404, { error: "API route not found." });
   if (req.method !== "GET" && req.method !== "HEAD") {
     res.writeHead(405, { Allow: "GET, HEAD" });
@@ -1358,6 +1291,7 @@ async function requestHandler(req, res) {
   return serveStatic(req, res, url);
 }
 
+// ── Server startup ────────────────────────────────────────────────────────────
 const server = http.createServer((req, res) => {
   requestHandler(req, res).catch((error) => {
     console.error(error);
@@ -1367,16 +1301,16 @@ const server = http.createServer((req, res) => {
 });
 
 if (!IS_VERCEL && require.main === module) {
-  server.listen(PORT, () => {
-    console.log(`Photography portfolio CMS running at http://localhost:${PORT}`);
+  ensureSystemSections().then(() => {
+    server.listen(PORT, () => {
+      console.log(`Photography portfolio CMS running at http://localhost:${PORT}`);
+      console.log(`Supabase: ${SUPABASE_URL || "(not configured)"}`);
+    });
   });
 }
 
 function shutdown() {
-  server.close(() => {
-    db.close();
-    process.exit(0);
-  });
+  server.close(() => process.exit(0));
 }
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);
