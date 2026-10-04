@@ -11,16 +11,16 @@
     if (element && typeof content[key] === "string") element.textContent = content[key];
   }
 
-  function setDbImage(role, photo) {
-    const container = document.querySelector(`[data-db-image="${role}"]`);
+  function setDbImage(key, url, alt = "") {
+    const container = document.querySelector(`[data-db-image="${key}"]`);
     if (!container) return;
     const image = container.querySelector("img");
-    if (!photo || !image) {
+    if (!url || !image) {
       container.hidden = true;
       return;
     }
-    image.src = photo.imageUrl;
-    image.alt = photo.altText || photo.description || photo.title || "";
+    image.src = url;
+    image.alt = alt || "Portfolio image";
     container.hidden = false;
   }
 
@@ -184,6 +184,9 @@
         el.textContent = content[key];
       }
     });
+
+    setDbImage("home.profileImage", content["home.profileImage"], content["home.profileImageAlt"]);
+    setDbImage("about.image", content["about.image"], content["about.imageAlt"]);
 
     setText(content, "home.heroTitle", ".header__content h1");
     setText(content, "home.heroSubtitle", ".header__content h2");
