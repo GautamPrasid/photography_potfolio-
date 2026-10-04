@@ -38,11 +38,14 @@ function supabaseConfigured() {
 }
 
 function sbHeaders(extra = {}) {
-  return {
+  const headers = {
     apikey: SUPABASE_SECRET_KEY,
-    Authorization: `Bearer ${SUPABASE_SECRET_KEY}`,
     ...extra,
   };
+  if (SUPABASE_SECRET_KEY.startsWith("eyJ")) {
+    headers.Authorization = `Bearer ${SUPABASE_SECRET_KEY}`;
+  }
+  return headers;
 }
 
 async function sbSelect(table, query = "") {
